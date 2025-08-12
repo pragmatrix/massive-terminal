@@ -1,6 +1,59 @@
+[workspace]
+
+package.edition = "2024"
+members = []
+
 [package]
 name = "massive-termnal"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 
 [dependencies]
+portable-pty.workspace = true
+termwiz.workspace = true
+massive-shell.workspace = true
+
+[workspace.dependencies]
+portable-pty = { version = "0.9.0" }
+termwiz = { version = "0.23.3" }
+
+# massive deps
+
+env_logger = "0.11.3"
+log = "0.4.19"
+tracing = "0.1.40"
+
+anyhow = { version = "1.0.99" }
+derive_more = { version = "2.0.1", features = ["full"] }
+static_assertions = "1.1.0"
+itertools = "0.12.1"
+
+serde = { version = "1.0.164", features = ["derive"] }
+serde_tuple = "0.5.0"
+
+bitflags = { version = "2.3.3" }
+bytemuck = { version = "1.13.1", features = ["derive"] }
+
+futures = { version = "0.3.30" }
+# rt-multi-thread is not supported on wasm
+tokio = { version = "1.36.0", features = ["macros", "sync"] }
+
+approx = "0.5.1"
+cgmath = { version = "0.18.0" }
+flo_curves = "0.7.2"
+
+winit = { version = "0.30.1", features = ["rwh_06"] }
+swash = "0.1.8"
+cosmic-text = { version = "0.11.2", features = ["swash"] }
+wgpu = "26.0.1"
+
+massive-animation = { path = "massive/animation" }
+massive-geometry = { path = "massive/geometry" }
+massive-renderer = { path = "massive/renderer" }
+massive-scene = { path = "massive/scene" }
+massive-shapes = { path = "massive/shapes" }
+massive-shell = { path = "massive/shell" }
+# wasm
+
+wasm-bindgen = { version = "0.2.100" }
+web-sys = "0.3.77"
