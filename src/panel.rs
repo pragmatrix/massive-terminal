@@ -105,19 +105,27 @@ impl Panel {
         // Production: Add bidi support
         let clusters = line.cluster(None);
 
-        let mut runs = Vec::with_capacity(clusters.len());
+        let mut shapes: Vec<Shape> = Vec::with_capacity(clusters.len());
+        let mut left = 0;
 
+        // Optimization: Combine clusters with compatible attributes. Colors and widths can vary
+        // inside a GlyphRun.
         for cluster in clusters {
-            runs.push(cluster_to_run(
+            let run = cluster_to_run(
                 font_system,
                 &self.font,
                 &self.color_palette,
-                top,
+                (left, top),
                 &cluster,
-            )?)
+            )?;
+
+            if let Some(run) = run {
+                left += run.metrics.width as usize;
+                shapes.push(run.into());
+            }
         }
 
-        Ok(runs.into_iter().flatten().map(|r| r.into()).collect())
+        Ok(shapes)
     }
 }
 
@@ -125,7 +133,7 @@ fn cluster_to_run(
     font_system: &mut FontSystem,
     font: &TerminalFont,
     color_palette: &ColorPalette,
-    top: usize,
+    (left, top): (usize, usize),
     cluster: &CellCluster,
 ) -> Result<Option<GlyphRun>> {
     let attributes = &cluster.attrs;
@@ -177,7 +185,7 @@ fn cluster_to_run(
 
         // Optimization: Don't pass empty glyphs.
         let glyph = RunGlyph {
-            pos: (glyph_x as i32, top as i32),
+            pos: (glyph_x as i32, 0),
             // Architecture: Interoduce an internal CacheKey that does not use SubpixelBin (we won't
             // support that ever, because the author holds the belief that subpixel rendering is a scam)
             //
@@ -205,7 +213,7 @@ fn cluster_to_run(
     };
 
     let run = GlyphRun {
-        translation: (0., 0., 0.).into(),
+        translation: (left as _, top as _, 0.).into(),
         metrics: GlyphRunMetrics {
             // Precision: compute this once for the font size so that it also matches the pixel cell
             // size.
