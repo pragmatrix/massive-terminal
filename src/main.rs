@@ -32,6 +32,7 @@ const TERMINAL_NAME: &str = "MassiveTerminal";
 const TERMINAL_VERSION: &str = "1.0";
 const DEFAULT_FONT_SIZE: f32 = 26.;
 const DEFAULT_TERMINAL_SIZE: (usize, usize) = (80 * 2, 24 * 2);
+const APPLICATION_NAME: &str = "Massive Terminal";
 
 const JETBRAINS_MONO: &[u8] =
     include_bytes!("fonts/JetBrainsMono-2.304/fonts/variable/JetBrainsMono[wght].ttf");
@@ -77,6 +78,8 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
             None,
         )
         .await?;
+    window.set_title(APPLICATION_NAME);
+
     let font_system = Arc::new(Mutex::new(font_system));
 
     // Ergonomics: Camera::default() should create this one.
