@@ -5,7 +5,7 @@ members = []
 exclude = [ "wezterm/Cargo.toml" ]
 
 [package]
-name = "massive-termnal"
+name = "massive-terminal"
 version = "0.1.0"
 edition.workspace = true
 
