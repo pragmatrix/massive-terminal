@@ -60,7 +60,7 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
     let font_size = DEFAULT_FONT_SIZE;
     let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
 
-    let cell_pixel_size = terminal_font.cell_pixel_size;
+    let cell_pixel_size = terminal_font.cell_size_px();
 
     // Research: Why trunc() and not ceil() or round()?
     let terminal_size = DEFAULT_TERMINAL_SIZE;

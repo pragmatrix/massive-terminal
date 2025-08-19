@@ -85,7 +85,7 @@ impl Panel {
 
         for (i, line) in lines.iter().enumerate() {
             let line_index = visual_line_index_top + i;
-            let top = line_index * self.font.cell_pixel_size.1;
+            let top = line_index * self.font.font_height_px();
             let shapes = self.line_to_shapes(&mut font_system, top, line)?;
             self.line_visuals[line_index].update_with(|v| {
                 // Appreciate: This converts a Vec<Shape> directly into a Arc<[Shape]>.
@@ -110,9 +110,8 @@ impl Panel {
         for cluster in clusters {
             runs.push(cluster_to_run(
                 font_system,
-                &self.font.family_name,
+                &self.font,
                 &self.color_palette,
-                self.font.size,
                 top,
                 &cluster,
             )?)
@@ -124,27 +123,29 @@ impl Panel {
 
 fn cluster_to_run(
     font_system: &mut FontSystem,
-    family_name: &str,
+    font: &TerminalFont,
     color_palette: &ColorPalette,
-    font_size: f32,
     top: usize,
     cluster: &CellCluster,
 ) -> Result<Option<GlyphRun>> {
     let attributes = &cluster.attrs;
 
-    // Performance: BufferLine makes a copy of the text, is there another way?
-
+    // Performance: BufferLine makes a copy of the text, is there a better way?
     // Architecture: Should we shape all clusters in one co and prepare Attrs::metadata() accordingly?
     // Architecture: Under the hood, rustybuzz is used for text shaping, use it directly?
-    // Robustness: Directly select a font here, either by name or even better by id.
+    // Performance: This contains internal caches, which might benefit reusing them.
     let mut buffer = BufferLine::new(
         &cluster.text,
         LineEnding::None,
-        AttrsList::new(&Attrs::new().family(Family::Name(family_name))),
+        AttrsList::new(&Attrs::new().family(Family::Name(&font.family_name))),
         Shaping::Advanced,
     );
 
-    let lines = buffer.layout(font_system, font_size, None, Wrap::None, None, 0);
+    let units_per_em_f = font.units_per_em as f32;
+
+    // ADR: We lay out in em units so that positioning information can be processed andcompared in
+    // discrete units and perhaps even cached better.
+    let lines = buffer.layout(font_system, units_per_em_f, None, Wrap::None, None, 0);
     let line = match lines.len() {
         0 => return Ok(None),
         1 => &lines[0],
@@ -161,9 +162,22 @@ fn cluster_to_run(
 
     let mut glyphs = Vec::with_capacity(line.glyphs.len());
 
+    // Robustness: Shouldn't this be always equal the number of line glyphs?
+    let mut cell_width = 0;
+
     for glyph in &line.glyphs {
+        // Compute the discrete x offset and pixel position.
+        // Robustness: Report unexpected variance here (> 0.001 ?)
+        let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as usize;
+        let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as usize;
+        let glyph_x = glyph_index * font.glyph_advance_px;
+
+        // Optimization: Compute this only once.
+        cell_width = glyph_index + glyph_index_width;
+
+        // Optimization: Don't pass empty glyphs.
         let glyph = RunGlyph {
-            pos: (glyph.x.floor() as _, top as _),
+            pos: (glyph_x as i32, top as i32),
             // Architecture: Interoduce an internal CacheKey that does not use SubpixelBin (we won't
             // support that ever, because the author holds the belief that subpixel rendering is a scam)
             //
@@ -172,7 +186,7 @@ fn cluster_to_run(
             key: CacheKey {
                 font_id: glyph.font_id,
                 glyph_id: glyph.glyph_id,
-                font_size_bits: glyph.font_size.to_bits(),
+                font_size_bits: font.size.to_bits(),
                 x_bin: SubpixelBin::Zero,
                 y_bin: SubpixelBin::Zero,
                 flags: glyph.cache_key_flags,
@@ -195,9 +209,9 @@ fn cluster_to_run(
         metrics: GlyphRunMetrics {
             // Precision: compute this once for the font size so that it also matches the pixel cell
             // size.
-            max_ascent: line.max_ascent.ceil() as u32,
-            max_descent: line.max_descent.ceil() as u32,
-            width: line.w.ceil() as u32,
+            max_ascent: font.ascender_px as u32,
+            max_descent: font.descender_px as u32,
+            width: (cell_width * font.glyph_advance_px) as u32,
         },
         text_color: (r, g, b, a).into(),
         text_weight: weight,
