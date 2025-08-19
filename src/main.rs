@@ -6,7 +6,7 @@ use std::{
 use anyhow::anyhow;
 use anyhow::{Result, bail};
 use cosmic_text::{FontSystem, fontdb};
-use massive_geometry::{Camera, Identity};
+use massive_geometry::{Camera, Color, Identity};
 use massive_scene::{Location, Matrix, Scene};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use rangeset::RangeSet;
@@ -17,7 +17,7 @@ use tokio::{
 };
 use tracing::error;
 
-use massive_shell::{ApplicationContext, shell};
+use massive_shell::{ApplicationContext, RendererMessage, shell};
 use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize, color};
 use winit::dpi::PhysicalSize;
 
@@ -30,7 +30,7 @@ pub use terminal_font::*;
 const TERMINAL_NAME: &str = "MassiveTerminal";
 /// Production: Extract from the build.
 const TERMINAL_VERSION: &str = "1.0";
-const DEFAULT_FONT_SIZE: f32 = 13.;
+const DEFAULT_FONT_SIZE: f32 = 26.;
 const DEFAULT_TERMINAL_SIZE: (usize, usize) = (80 * 2, 24 * 2);
 
 const JETBRAINS_MONO: &[u8] =
@@ -94,6 +94,9 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
             (inner_window_size.0 as u32, inner_window_size.1 as _),
         )
         .await?;
+
+    // Ergonomics: Feels weird sending a message to set the background color.
+    renderer.post_msg(RendererMessage::SetBackgroundColor(Some(Color::BLACK)))?;
 
     // Use the native pty implementation for the system
     let pty_system = native_pty_system();
