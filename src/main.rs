@@ -1,33 +1,31 @@
-#![allow(unused_imports)]
-mod panel;
-
 use std::{
-    io::{self, BufReader, ErrorKind, Read, Write},
-    sync::{Arc, Mutex, mpsc::channel},
-    thread,
+    io::{self, ErrorKind},
+    sync::{Arc, Mutex},
 };
 
 use anyhow::anyhow;
 use anyhow::{Result, bail};
-use cosmic_text::{
-    Attrs, AttrsList, Buffer, BufferLine, FontSystem, LineEnding, Metrics, Shaping, Wrap, fontdb,
-};
+use cosmic_text::{FontSystem, fontdb};
 use massive_geometry::{Camera, Identity};
 use massive_scene::{Location, Matrix, Scene};
-use portable_pty::{CommandBuilder, PtySize, PtySystem, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use rangeset::RangeSet;
 use tokio::{
     select,
     sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     task,
 };
-use tracing::{error, info, warn};
+use tracing::error;
 
 use massive_shell::{ApplicationContext, shell};
-use wezterm_term::{Line, Terminal, TerminalConfiguration, TerminalSize, VisibleRowIndex, color};
-use winit::dpi::{LogicalSize, PhysicalSize};
+use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize, color};
+use winit::dpi::PhysicalSize;
 
-use crate::panel::Panel;
+mod panel;
+mod terminal_font;
+
+pub use panel::*;
+pub use terminal_font::*;
 
 const TERMINAL_NAME: &str = "MassiveTerminal";
 /// Production: Extract from the build.
@@ -58,29 +56,13 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
     };
 
     let font = font_system.get_font(ids[0]).unwrap();
-    // important for CacheKey
-    let font = font.rustybuzz();
 
     let font_size = DEFAULT_FONT_SIZE;
+    let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
 
-    assert!(font.is_monospaced());
-    assert!(font.line_gap() == 0);
-
-    // Ignoring line gap here.
-    let units_per_em = font.units_per_em() as f32;
-    let glyph_height = font.height() as f32 * font_size / units_per_em;
-    let glyph_width = {
-        let glyph_index = font.glyph_index('M').unwrap();
-        println!("GlyphId of M {glyph_index:?}");
-        let advance = font.glyph_hor_advance(glyph_index).unwrap() as f32;
-        advance * font_size / units_per_em
-    };
-
-    // let font_pixel_size = pixel_size_monospace_font(&mut font_system, DEFAULT_FONT_SIZE);
-    println!("Glyph width / height: {glyph_width}, {glyph_height}");
+    let cell_pixel_size = terminal_font.cell_pixel_size;
 
     // Research: Why trunc() and not ceil() or round()?
-    let cell_pixel_size = (glyph_width.trunc() as usize, glyph_height.trunc() as usize);
     let terminal_size = DEFAULT_TERMINAL_SIZE;
 
     let inner_window_size = (
@@ -116,10 +98,12 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
     // Use the native pty implementation for the system
     let pty_system = native_pty_system();
 
+    let (columns, rows) = terminal_size;
+
     // Create a new pty
     let pair = pty_system.openpty(PtySize {
-        rows: terminal_size.1 as _,
-        cols: terminal_size.0 as _,
+        rows: rows as _,
+        cols: columns as _,
         // Robustness: is this physical or logical size, and what does a terminal actually do with it?
         pixel_width: cell_pixel_size.0 as _,
         pixel_height: cell_pixel_size.1 as _,
@@ -151,8 +135,8 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
     let mut terminal = Terminal::new(
         // Production: Set dpi
         TerminalSize {
-            rows: terminal_size.1,
-            cols: terminal_size.0,
+            rows,
+            cols: columns,
             pixel_width: cell_pixel_size.0,
             pixel_height: cell_pixel_size.1,
             ..TerminalSize::default()
@@ -162,7 +146,6 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
         TERMINAL_VERSION,
         writer,
     );
-
     let mut last_rendered_seq_no = terminal.current_seqno();
 
     let scene = Scene::new();
@@ -172,10 +155,10 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
         parent: None,
         matrix: panel_matrix,
     });
+
     let mut panel = Panel::new(
         font_system.clone(),
-        font_size,
-        cell_pixel_size,
+        terminal_font,
         terminal_size.1,
         panel_location,
         &scene,

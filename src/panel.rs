@@ -8,12 +8,14 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use termwiz::{cellcluster::CellCluster, color};
+use termwiz::cellcluster::CellCluster;
 use wezterm_term::{Intensity, Line, color::ColorPalette};
 
-use massive_geometry::{Color, Identity};
+use massive_geometry::Identity;
 use massive_scene::{Handle, Location, Matrix, Scene, Shape, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, TextWeight};
+
+use crate::TerminalFont;
 
 /// Panel is the representation of the terminal screen.
 ///
@@ -24,10 +26,9 @@ use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, TextWeight};
 #[derive(Debug)]
 pub struct Panel {
     font_system: Arc<Mutex<FontSystem>>,
-    font_size: f32,
+    /// The terminal font.
+    font: TerminalFont,
     color_palette: ColorPalette,
-    /// One cell of the grid in pixels.
-    cell_pixel_size: (usize, usize),
 
     /// The matrix all visuals are transformed with.
     _scroll_location: Handle<Location>,
@@ -43,8 +44,7 @@ impl Panel {
     /// unused visuals.
     pub fn new(
         font_system: Arc<Mutex<FontSystem>>,
-        font_size: f32,
-        cell_pixel_size: (usize, usize),
+        font: TerminalFont,
         rows: usize,
         location: Handle<Location>,
         scene: &Scene,
@@ -67,9 +67,8 @@ impl Panel {
 
         Self {
             font_system,
-            font_size,
+            font,
             color_palette: ColorPalette::default(),
-            cell_pixel_size,
             _scroll_location: scroll_location,
             line_visuals,
         }
@@ -86,7 +85,7 @@ impl Panel {
 
         for (i, line) in lines.iter().enumerate() {
             let line_index = visual_line_index_top + i;
-            let top = line_index * self.cell_pixel_size.1;
+            let top = line_index * self.font.cell_pixel_size.1;
             let shapes = self.line_to_shapes(&mut font_system, top, line)?;
             self.line_visuals[line_index].update_with(|v| {
                 // Appreciate: This converts a Vec<Shape> directly into a Arc<[Shape]>.
@@ -112,7 +111,7 @@ impl Panel {
             runs.push(cluster_to_run(
                 font_system,
                 &self.color_palette,
-                self.font_size,
+                self.font.size,
                 top,
                 &cluster,
             )?)
