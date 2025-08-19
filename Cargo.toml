@@ -2,6 +2,7 @@
 
 package.edition = "2024"
 members = []
+exclude = [ "wezterm/Cargo.toml" ]
 
 [package]
 name = "massive-termnal"
@@ -9,43 +10,28 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-portable-pty.workspace = true
-termwiz.workspace = true
+wezterm-term.workspace = true
+
+massive-scene.workspace = true
+massive-shapes.workspace = true
 massive-shell.workspace = true
+massive-geometry.workspace = true
+
+anyhow.workspace = true
+cosmic-text.workspace = true
+futures.workspace = true
+portable-pty.workspace = true
+rangeset.workspace = true
+sys-locale.workspace = true
+termwiz.workspace = true
+tokio-util.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+winit.workspace = true # Ergonomics: Get rid of the winit dependency. Used for because of LogicalSize.
 
 [workspace.dependencies]
-portable-pty = { version = "0.9.0" }
-termwiz = { version = "0.23.3" }
 
 # massive deps
-
-env_logger = "0.11.3"
-log = "0.4.19"
-tracing = "0.1.40"
-
-anyhow = { version = "1.0.99" }
-derive_more = { version = "2.0.1", features = ["full"] }
-static_assertions = "1.1.0"
-itertools = "0.12.1"
-
-serde = { version = "1.0.164", features = ["derive"] }
-serde_tuple = "0.5.0"
-
-bitflags = { version = "2.3.3" }
-bytemuck = { version = "1.13.1", features = ["derive"] }
-
-futures = { version = "0.3.30" }
-# rt-multi-thread is not supported on wasm
-tokio = { version = "1.36.0", features = ["macros", "sync"] }
-
-approx = "0.5.1"
-cgmath = { version = "0.18.0" }
-flo_curves = "0.7.2"
-
-winit = { version = "0.30.1", features = ["rwh_06"] }
-swash = "0.1.8"
-cosmic-text = { version = "0.11.2", features = ["swash"] }
-wgpu = "26.0.1"
 
 massive-animation = { path = "massive/animation" }
 massive-geometry = { path = "massive/geometry" }
@@ -53,7 +39,113 @@ massive-renderer = { path = "massive/renderer" }
 massive-scene = { path = "massive/scene" }
 massive-shapes = { path = "massive/shapes" }
 massive-shell = { path = "massive/shell" }
+
+anyhow = { version = "1.0.99" }
+approx = "0.5.1"
+bytemuck = { version = "1.13.1", features = ["derive"] }
+cgmath = { version = "0.18.0" }
+cosmic-text = { version = "0.14.2", features = ["swash"] }
+derive_more = { version = "2.0.1", features = ["full"] }
+env_logger = "0.11.3"
+flo_curves = "0.8.0"
+futures = { version = "0.3.30" }
+itertools = "0.14.0"
+log = "0.4.19"
+serde = { version = "1.0.164", features = ["derive"] }
+serde_tuple = "1.1.2"
+static_assertions = "1.1.0"
+swash = "0.2.5"
+sys-locale = { version = "0.3.2" }
+tokio = { version = "1.36.0", features = ["macros", "sync"] }
+tokio-util = { version = "0.7.16", features = ["io"] }
+tracing = "0.1.40"
+wgpu = "26.0.1"
+winit = { version = "0.30.1", features = ["rwh_06"] }
+
+# wezterm needs version 1 for now.
+bitflags = { version = "1.3" }
+
 # wasm
+
 
 wasm-bindgen = { version = "0.2.100" }
 web-sys = "0.3.77"
+
+# wezterm-term
+wezterm-term = { path = "wezterm/term" }
+
+base64 = { version = "0.22", default-features = false }
+cassowary = "0.3"
+criterion = "0.5"
+csscolorparser = "0.6"
+deltae = "0.3"
+downcast-rs = "1.0"
+euclid = { version="0.22", default-features = false }
+fancy-regex = { version="0.14", default-features = false, features = [] }
+fixedbitset = { version = "0.4", default-features = false }
+fnv = "1.0"
+getrandom = "0.3.1"
+heapless = "0.8"
+hex = { version = "0.4", default-features = false }
+humansize = "2.1"
+image = "0.25"
+k9 = "0.12.0"
+lazy_static = "1.4"
+libc = "0.2"
+lru = "0.12"
+mac_address = "1.1.8"
+maplit = "1.0"
+memmem = "0.1"
+miniz_oxide = "0.7"
+nix = "0.29"
+num-derive = "0.4"
+num-traits = { version = "0.2", default-features = false }
+ordered-float = { version = "4.1", default-features = false }
+pest = "2.7"
+pest_derive = "2.7"
+phf = { version = "0.11", default-features = false }
+proc-macro2 = "1.0"
+quote = "1.0.2"
+serial2 = "0.2"
+sha2 = "0.10"
+shared_library = "0.1"
+shell-words = "1.1"
+signal-hook = "0.3"
+siphasher = "1.0.1"
+smol = "2.0"
+strsim = "0.11"
+syn = "1.0"
+tempfile = "3.20"
+terminfo = "0.9"
+termios = "0.3"
+thiserror = "1.0"
+ucd-trie = { version = "0.1", default-features = false }
+unicode-normalization = "0.1.24"
+unicode-segmentation = "1.12"
+url = "2"
+utf8parse = "0.2"
+uuid = "1.13"
+winapi = "0.3.9"
+winreg = "0.10"
+
+filedescriptor = { version = "0.8.3", path = "wezterm/filedescriptor" }
+portable-pty = { path = "wezterm/pty" }
+termwiz = { version = "0.24.0", path = "wezterm/termwiz" }
+vtparse = { version = "0.7", path = "wezterm/vtparse", default-features = false }
+wezterm-bidi = { version = "0.2.3", path = "wezterm/bidi", default-features = false }
+wezterm-blob-leases = { version = "0.1.1", path = "wezterm/wezterm-blob-leases" }
+wezterm-cell = { path = "wezterm/wezterm-cell" }
+wezterm-char-props = { path = "wezterm/wezterm-char-props", default-features = false }
+wezterm-color-types = { version = "0.3", path = "wezterm/color-types", default-features = false }
+wezterm-dynamic = { version = "0.2.1", path = "wezterm/wezterm-dynamic", default-features = false }
+wezterm-dynamic-derive = { version = "0.1.1", path = "wezterm/wezterm-dynamic/derive" }
+wezterm-escape-parser = { version = "0.1.0", path = "wezterm/wezterm-escape-parser" }
+wezterm-input-types = { version = "0.1", path = "wezterm/wezterm-input-types", default-features = false }
+wezterm-surface = { path = "wezterm/wezterm-surface" }
+
+finl_unicode = { version = "1.3", git = "https://github.com/wez/finl_unicode.git", branch = "no_std" , default-features = false, features = ["categories", "grapheme_clusters"] }
+
+# Our direct dependencies on wezterm's utilities.
+rangeset = { path = "wezterm/rangeset" } # used only by us.
+num = "0.4"
+

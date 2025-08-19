@@ -1,3 +1,302 @@
-fn main() {
-    println!("Hello, world!");
+#![allow(unused_imports)]
+mod panel;
+
+use std::{
+    io::{self, BufReader, ErrorKind, Read, Write},
+    sync::{Arc, Mutex, mpsc::channel},
+    thread,
+};
+
+use anyhow::anyhow;
+use anyhow::{Result, bail};
+use cosmic_text::{
+    Attrs, AttrsList, Buffer, BufferLine, FontSystem, LineEnding, Metrics, Shaping, Wrap, fontdb,
+};
+use massive_geometry::{Camera, Identity};
+use massive_scene::{Location, Matrix, Scene};
+use portable_pty::{CommandBuilder, PtySize, PtySystem, native_pty_system};
+use rangeset::RangeSet;
+use tokio::{
+    select,
+    sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    task,
+};
+use tracing::{error, info, warn};
+
+use massive_shell::{ApplicationContext, shell};
+use wezterm_term::{Line, Terminal, TerminalConfiguration, TerminalSize, VisibleRowIndex, color};
+use winit::dpi::{LogicalSize, PhysicalSize};
+
+use crate::panel::Panel;
+
+const TERMINAL_NAME: &str = "MassiveTerminal";
+/// Production: Extract from the build.
+const TERMINAL_VERSION: &str = "1.0";
+const DEFAULT_FONT_SIZE: f32 = 13.;
+const DEFAULT_TERMINAL_SIZE: (usize, usize) = (80 * 2, 24 * 2);
+
+const JETBRAINS_MONO: &[u8] =
+    include_bytes!("fonts/JetBrainsMono-2.304/fonts/variable/JetBrainsMono[wght].ttf");
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    shell::run(massive_terminal)
+}
+
+async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
+    let ids;
+    let mut font_system = {
+        // In wasm the system locale can't be acquired. `sys_locale::get_locale()`
+        let locale =
+            sys_locale::get_locale().ok_or(anyhow!("Failed to retrieve current locale"))?;
+
+        // Don't load system fonts for now, this way we get the same result on wasm and local runs.
+        let mut font_db = fontdb::Database::new();
+        let source = fontdb::Source::Binary(Arc::new(JETBRAINS_MONO));
+        ids = font_db.load_font_source(source);
+        FontSystem::new_with_locale_and_db(locale, font_db)
+    };
+
+    let font = font_system.get_font(ids[0]).unwrap();
+    // important for CacheKey
+    let font = font.rustybuzz();
+
+    let font_size = DEFAULT_FONT_SIZE;
+
+    assert!(font.is_monospaced());
+    assert!(font.line_gap() == 0);
+
+    // Ignoring line gap here.
+    let units_per_em = font.units_per_em() as f32;
+    let glyph_height = font.height() as f32 * font_size / units_per_em;
+    let glyph_width = {
+        let glyph_index = font.glyph_index('M').unwrap();
+        println!("GlyphId of M {glyph_index:?}");
+        let advance = font.glyph_hor_advance(glyph_index).unwrap() as f32;
+        advance * font_size / units_per_em
+    };
+
+    // let font_pixel_size = pixel_size_monospace_font(&mut font_system, DEFAULT_FONT_SIZE);
+    println!("Glyph width / height: {glyph_width}, {glyph_height}");
+
+    // Research: Why trunc() and not ceil() or round()?
+    let cell_pixel_size = (glyph_width.trunc() as usize, glyph_height.trunc() as usize);
+    let terminal_size = DEFAULT_TERMINAL_SIZE;
+
+    let inner_window_size = (
+        cell_pixel_size.0 * terminal_size.0,
+        cell_pixel_size.1 * terminal_size.1,
+    );
+
+    // Research: What do we really mean with a font size when we go through the physical size here?
+    let window = context
+        .new_window(
+            PhysicalSize::new(inner_window_size.0 as u32, inner_window_size.1 as _),
+            None,
+        )
+        .await?;
+    let font_system = Arc::new(Mutex::new(font_system));
+
+    // Ergonomics: Camera::default() should create this one.
+    let camera = {
+        let fovy: f64 = 45.0;
+        let camera_distance = 1.0 / (fovy / 2.0).to_radians().tan();
+        Camera::new((0.0, 0.0, camera_distance), (0.0, 0.0, 0.0))
+    };
+
+    // Ergonomics: Why does the renderer need a camera here this early?
+    let mut renderer = window
+        .new_renderer(
+            font_system.clone(),
+            camera,
+            (inner_window_size.0 as u32, inner_window_size.1 as _),
+        )
+        .await?;
+
+    // Use the native pty implementation for the system
+    let pty_system = native_pty_system();
+
+    // Create a new pty
+    let pair = pty_system.openpty(PtySize {
+        rows: terminal_size.1 as _,
+        cols: terminal_size.0 as _,
+        // Robustness: is this physical or logical size, and what does a terminal actually do with it?
+        pixel_width: cell_pixel_size.0 as _,
+        pixel_height: cell_pixel_size.1 as _,
+    })?;
+
+    let cmd = CommandBuilder::new_default_prog();
+
+    let _child = pair.slave.spawn_command(cmd)?;
+
+    // Read and parse output from the pty with reader
+    let reader = pair.master.try_clone_reader()?;
+    let mut shell_output = read_to_receiver(reader);
+
+    // Noone knows here what and when anything blocks, so we create two channels for writing and on
+    // for reading from the pty.
+    // Send data to the pty by writing to the master
+
+    let writer = pair.master.take_writer()?;
+    // thread::spawn(move || {
+    //     writeln!(writer, "ls -l").unwrap();
+    //     // writer.flush().unwrap();
+    //     // drop(writer);
+    //     #[allow(clippy::empty_loop)]
+    //     loop {}
+    // });
+
+    let configuration = MassiveTerminalConfiguration {};
+
+    let mut terminal = Terminal::new(
+        // Production: Set dpi
+        TerminalSize {
+            rows: terminal_size.1,
+            cols: terminal_size.0,
+            pixel_width: cell_pixel_size.0,
+            pixel_height: cell_pixel_size.1,
+            ..TerminalSize::default()
+        },
+        Arc::new(configuration),
+        TERMINAL_NAME,
+        TERMINAL_VERSION,
+        writer,
+    );
+
+    let mut last_rendered_seq_no = terminal.current_seqno();
+
+    let scene = Scene::new();
+
+    let panel_matrix = scene.stage(Matrix::identity());
+    let panel_location = scene.stage(Location {
+        parent: None,
+        matrix: panel_matrix,
+    });
+    let mut panel = Panel::new(
+        font_system.clone(),
+        font_size,
+        cell_pixel_size,
+        terminal_size.1,
+        panel_location,
+        &scene,
+    );
+
+    loop {
+        let shell_event_opt = select! {
+            output = shell_output.recv() => {
+                let Some(Ok(output)) = output else {
+                    bail!("Shell output stopped");
+                };
+
+                terminal.advance_bytes(output);
+                None
+            }
+            shell_event = context.wait_for_shell_event(&mut renderer) => {
+                Some(shell_event?)
+            }
+        };
+
+        // Performance: We begin an update cycle whenever the terminal advances. This should
+        // probably be done asynchronously, deferred, etc. But note that the renderer is also
+        // running asynchronously at the end of the update cycle.
+        let _cycle = context.begin_update_cycle(&scene, &mut renderer, shell_event_opt.as_ref())?;
+
+        // Performance: No need to begin an update cycle if there are no visible chnages
+        let update_lines = {
+            let current_seq_no = terminal.current_seqno();
+            assert!(current_seq_no >= last_rendered_seq_no);
+            current_seq_no > last_rendered_seq_no
+        };
+
+        if update_lines {
+            let screen = terminal.screen();
+            let stable_top = screen.visible_row_to_stable_row(0);
+            let view_stable_range = stable_top..stable_top + screen.physical_rows as isize;
+
+            // Production: Add a kind of view into the stable rows?
+            let lines_changed_stable =
+                screen.get_changed_stable_rows(view_stable_range, last_rendered_seq_no);
+
+            println!("Lines changed: {}", lines_changed_stable.len());
+
+            let mut set = RangeSet::new();
+            lines_changed_stable.into_iter().for_each(|l| set.add(l));
+
+            for stable_range in set.iter() {
+                let phys_range = screen.stable_range(stable_range);
+
+                assert!(stable_range.start >= stable_top);
+                let visible_range_start = stable_range.start - stable_top;
+
+                // Architecture: Going through building a set for accessing each changed line
+                // individually does not actually make sense when we just need to access Line
+                // references, but we can't access them directly.
+                //
+                // **Update**: Currently, it does make sense because of locking FontSystem only once
+                // (but hey, this could also be bad).
+
+                let mut r = Ok(());
+
+                screen.with_phys_lines(phys_range, |lines| {
+                    r = panel.update_lines(&scene, visible_range_start as usize, lines);
+                });
+
+                r?;
+            }
+
+            // Commit
+
+            last_rendered_seq_no = terminal.current_seqno()
+        }
+
+        //io::stdout().write_all(&output?)?;
+    }
+
+    // Ok(())
+}
+
+#[derive(Debug)]
+struct MassiveTerminalConfiguration {}
+
+impl TerminalConfiguration for MassiveTerminalConfiguration {
+    fn color_palette(&self) -> color::ColorPalette {
+        // Production: Review.
+        color::ColorPalette::default()
+    }
+}
+
+fn read_to_receiver(reader: impl io::Read + Send + 'static) -> UnboundedReceiver<Result<Vec<u8>>> {
+    let (tx, rx) = unbounded_channel();
+
+    task::spawn_blocking(move || {
+        if let Err(e) = lp(reader, tx) {
+            error!("Reader ended unexpectedly: {e:?}")
+        }
+
+        fn lp(
+            mut reader: impl io::Read + Send + 'static,
+            tx: UnboundedSender<Result<Vec<u8>>>,
+        ) -> Result<()> {
+            let mut buf = [0u8; 0x8000];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => {
+                        return Ok(()); // EOF
+                    }
+                    Ok(bytes_read) => {
+                        tx.send(Ok(buf[0..bytes_read].to_vec()))?;
+                    }
+                    Err(e) if e.kind() == ErrorKind::Interrupted => {
+                        // as suggested, retry.
+                    }
+                    Err(e) => {
+                        tx.send(Err(e.into()))?;
+                        bail!("Reader ended because of an error the receiver must handle.")
+                    }
+                }
+            }
+        }
+    });
+
+    rx
 }
