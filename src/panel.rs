@@ -110,6 +110,7 @@ impl Panel {
         for cluster in clusters {
             runs.push(cluster_to_run(
                 font_system,
+                &self.font.family_name,
                 &self.color_palette,
                 self.font.size,
                 top,
@@ -123,6 +124,7 @@ impl Panel {
 
 fn cluster_to_run(
     font_system: &mut FontSystem,
+    family_name: &str,
     color_palette: &ColorPalette,
     font_size: f32,
     top: usize,
@@ -138,7 +140,7 @@ fn cluster_to_run(
     let mut buffer = BufferLine::new(
         &cluster.text,
         LineEnding::None,
-        AttrsList::new(&Attrs::new().family(Family::Monospace)),
+        AttrsList::new(&Attrs::new().family(Family::Name(family_name))),
         Shaping::Advanced,
     );
 

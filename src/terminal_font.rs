@@ -7,6 +7,7 @@ use cosmic_text::Font;
 #[derive(Debug, Clone)]
 pub struct TerminalFont {
     pub font: Arc<Font>,
+    pub family_name: String,
     pub size: f32,
     pub units_per_em: usize,
     pub glyph_size_em: (usize, usize),
@@ -17,6 +18,14 @@ pub struct TerminalFont {
 impl TerminalFont {
     pub fn from_cosmic_text(font: Arc<Font>, size: f32) -> Result<Self> {
         let hb_font = font.rustybuzz();
+
+        let family_name = hb_font
+            .names()
+            .into_iter()
+            .find(|n| n.name_id == 1)
+            .ok_or(anyhow!("Failed to get family name from font (name id 1)"))?
+            .to_string()
+            .ok_or(anyhow!("Only unicode family names are supported (yet)"))?;
 
         if !hb_font.is_monospaced() {
             bail!("Terminal fonts must be monospaced");
@@ -51,6 +60,7 @@ impl TerminalFont {
 
         Ok(Self {
             font,
+            family_name,
             size,
             units_per_em: units_per_em.try_into().context("units per em")?,
             glyph_size_em,
