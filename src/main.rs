@@ -156,7 +156,7 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
     let panel_matrix = scene.stage(Matrix::identity());
     let panel_location = scene.stage(Location {
         parent: None,
-        matrix: panel_matrix,
+        matrix: panel_matrix.clone(),
     });
 
     let mut panel = Panel::new(
@@ -233,6 +233,24 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
             // Commit
 
             last_rendered_seq_no = terminal.current_seqno()
+        }
+
+        // Center
+
+        {
+            let page_size = window.inner_size();
+            let center_transform = {
+                Matrix::from_translation(
+                    (
+                        -((page_size.width / 2) as f64),
+                        -((page_size.height / 2) as f64),
+                        0.0,
+                    )
+                        .into(),
+                )
+            };
+
+            panel_matrix.update_if_changed(center_transform);
         }
 
         //io::stdout().write_all(&output?)?;
