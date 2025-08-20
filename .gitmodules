@@ -1,3 +1,7 @@
 [submodule "massive"]
 	path = massive
 	url = ../massive
+[submodule "wezterm"]
+	path = wezterm
+	url = https://github.com/wezterm/wezterm.git
+	branch = massive-terminal
