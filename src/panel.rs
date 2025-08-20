@@ -151,7 +151,7 @@ fn cluster_to_run(
 
     let units_per_em_f = font.units_per_em as f32;
 
-    // ADR: We lay out in em units so that positioning information can be processed andcompared in
+    // ADR: We lay out in em units so that positioning information can be processed and compared in
     // discrete units and perhaps even cached better.
     let lines = buffer.layout(font_system, units_per_em_f, None, Wrap::None, None, 0);
     let line = match lines.len() {
