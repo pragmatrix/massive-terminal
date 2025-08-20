@@ -32,7 +32,7 @@ pub struct Panel {
 
     /// The matrix all visuals are transformed with.
     _scroll_location: Handle<Location>,
-    // VecDeque becase we want to optimize them for scrolling.
+    // VecDeque because we want to optimize them for scrolling.
     line_visuals: VecDeque<Handle<Visual>>,
 }
 
