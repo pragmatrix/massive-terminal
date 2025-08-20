@@ -186,7 +186,7 @@ fn cluster_to_run(
         // Optimization: Don't pass empty glyphs.
         let glyph = RunGlyph {
             pos: (glyph_x as i32, 0),
-            // Architecture: Interoduce an internal CacheKey that does not use SubpixelBin (we won't
+            // Architecture: Introduce an internal CacheKey that does not use SubpixelBin (we won't
             // support that ever, because the author holds the belief that subpixel rendering is a scam)
             //
             // Architecture: Research if we would actually benefit from subpixel rendering in
