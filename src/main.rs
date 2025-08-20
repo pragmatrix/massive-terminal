@@ -30,7 +30,7 @@ pub use terminal_font::*;
 const TERMINAL_NAME: &str = "MassiveTerminal";
 /// Production: Extract from the build.
 const TERMINAL_VERSION: &str = "1.0";
-const DEFAULT_FONT_SIZE: f32 = 26.;
+const DEFAULT_FONT_SIZE: f32 = 13.;
 const DEFAULT_TERMINAL_SIZE: (usize, usize) = (80 * 2, 24 * 2);
 const APPLICATION_NAME: &str = "Massive Terminal";
 
@@ -58,7 +58,9 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
 
     let font = font_system.get_font(ids[0]).unwrap();
 
-    let font_size = DEFAULT_FONT_SIZE;
+    let font_size =
+        DEFAULT_FONT_SIZE * context.primary_monitor_scale_factor().unwrap_or_default() as f32;
+
     let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
 
     let cell_pixel_size = terminal_font.cell_size_px();
@@ -71,7 +73,6 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
         cell_pixel_size.1 * terminal_size.1,
     );
 
-    // Research: What do we really mean with a font size when we go through the physical size here?
     let window = context
         .new_window(
             PhysicalSize::new(inner_window_size.0 as u32, inner_window_size.1 as _),
