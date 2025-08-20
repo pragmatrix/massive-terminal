@@ -205,7 +205,7 @@ fn cluster_to_run(
 
     // Precision: Clarify what color profile we are actually using and document this in the massive Color.
     let (r, g, b, a) = color_palette.resolve_fg(attributes.foreground()).into();
-    // Feature: Support a base wheigt.
+    // Feature: Support a base weight.
     let weight = match attributes.intensity() {
         Intensity::Half => TextWeight::LIGHT,
         Intensity::Normal => TextWeight::NORMAL,
