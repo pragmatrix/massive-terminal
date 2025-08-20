@@ -191,7 +191,7 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
         // running asynchronously at the end of the update cycle.
         let _cycle = context.begin_update_cycle(&scene, &mut renderer, shell_event_opt.as_ref())?;
 
-        // Performance: No need to begin an update cycle if there are no visible chnages
+        // Performance: No need to begin an update cycle if there are no visible changes
         let update_lines = {
             let current_seq_no = terminal.current_seqno();
             assert!(current_seq_no >= last_rendered_seq_no);
