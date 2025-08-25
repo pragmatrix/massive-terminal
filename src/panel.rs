@@ -8,16 +8,16 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use termwiz::cellcluster::CellCluster;
-use wezterm_term::{Intensity, Line, color::ColorPalette};
+use termwiz::{cellcluster::CellCluster, color::ColorAttribute, surface::CursorVisibility};
+use wezterm_term::{CursorPosition, Intensity, Line, color::ColorPalette};
 
-use massive_geometry::Identity;
-use massive_scene::{Handle, Location, Matrix, Scene, Shape, Visual};
-use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, TextWeight};
+use massive_geometry::{Color, Identity, Rect};
+use massive_scene::{Handle, Location, Matrix, Scene, Visual};
+use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, TextWeight};
 
 use crate::TerminalFont;
 
-/// Panel is the representation of the terminal screen.
+/// Panel is the representation of the terminal.
 ///
 /// - It always contains a single [`Visual`] for each line. Even if this line is
 ///   currently not rendered.
@@ -31,9 +31,10 @@ pub struct Panel {
     color_palette: ColorPalette,
 
     /// The matrix all visuals are transformed with.
-    _scroll_location: Handle<Location>,
+    scroll_location: Handle<Location>,
     // VecDeque because we want to optimize them for scrolling.
     line_visuals: VecDeque<Handle<Visual>>,
+    cursor: Option<Handle<Visual>>,
 }
 
 impl Panel {
@@ -69,11 +70,40 @@ impl Panel {
             font_system,
             font,
             color_palette: ColorPalette::default(),
-            _scroll_location: scroll_location,
+            scroll_location,
             line_visuals,
+            cursor: None,
         }
     }
+}
 
+// Cursor
+
+impl Panel {
+    pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition) {
+        match pos.visibility {
+            CursorVisibility::Hidden => {
+                self.cursor = None;
+            }
+            CursorVisibility::Visible => {
+                let cell_size = self.font.cell_size_px();
+                let left = cell_size.0 * pos.x;
+                let top = cell_size.1 * pos.y as usize;
+                let shape: Shape = massive_shapes::Rect {
+                    rect: Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _)),
+                    color: Color::WHITE,
+                }
+                .into();
+                let visual = Visual::new(self.scroll_location.clone(), [shape]);
+                self.cursor = Some(scene.stage(visual));
+            }
+        }
+    }
+}
+
+// Lines
+
+impl Panel {
     pub fn update_lines(
         &mut self,
         // Not used, we don't stage new objects here (yet!).
@@ -88,7 +118,6 @@ impl Panel {
             let top = line_index * self.font.font_height_px();
             let shapes = self.line_to_shapes(&mut font_system, top, line)?;
             self.line_visuals[line_index].update_with(|v| {
-                // Appreciate: This converts a Vec<Shape> directly into a Arc<[Shape]>.
                 v.shapes = shapes.into();
             });
         }
