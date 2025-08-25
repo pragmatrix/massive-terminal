@@ -239,6 +239,11 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
             last_rendered_seq_no = terminal.current_seqno()
         }
 
+        // Cursor
+
+        let pos = terminal.cursor_pos();
+        panel.update_cursor(&scene, pos);
+
         // Center
 
         {
