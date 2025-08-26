@@ -8,16 +8,19 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use termwiz::cellcluster::CellCluster;
-use wezterm_term::{Intensity, Line, color::ColorPalette};
+use termwiz::{
+    cellcluster::CellCluster,
+    surface::{CursorShape, CursorVisibility},
+};
+use wezterm_term::{CursorPosition, Intensity, Line, color::ColorPalette};
 
-use massive_geometry::Identity;
-use massive_scene::{Handle, Location, Matrix, Scene, Shape, Visual};
-use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, TextWeight};
+use massive_geometry::{Identity, Rect, Size};
+use massive_scene::{Handle, Location, Matrix, Scene, Visual};
+use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 
 use crate::TerminalFont;
 
-/// Panel is the representation of the terminal screen.
+/// Panel is the representation of the terminal.
 ///
 /// - It always contains a single [`Visual`] for each line. Even if this line is
 ///   currently not rendered.
@@ -31,9 +34,10 @@ pub struct Panel {
     color_palette: ColorPalette,
 
     /// The matrix all visuals are transformed with.
-    _scroll_location: Handle<Location>,
+    scroll_location: Handle<Location>,
     // VecDeque because we want to optimize them for scrolling.
     line_visuals: VecDeque<Handle<Visual>>,
+    cursor: Option<Handle<Visual>>,
 }
 
 impl Panel {
@@ -69,11 +73,91 @@ impl Panel {
             font_system,
             font,
             color_palette: ColorPalette::default(),
-            _scroll_location: scroll_location,
+            scroll_location,
             line_visuals,
+            cursor: None,
+        }
+    }
+}
+
+// Cursor
+
+impl Panel {
+    pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, focused: bool) {
+        match pos.visibility {
+            CursorVisibility::Hidden => {
+                self.cursor = None;
+            }
+            CursorVisibility::Visible => {
+                let basic_shape = Self::basic_cursor_shape(pos.shape, focused);
+                let shape = self.cursor_shape(basic_shape, pos);
+                let visual = Visual::new(self.scroll_location.clone(), [shape]);
+                self.cursor = Some(scene.stage(visual));
+            }
         }
     }
 
+    fn basic_cursor_shape(shape: CursorShape, focused: bool) -> BasicCursorShape {
+        if !focused {
+            return BasicCursorShape::Rect;
+        }
+        match shape {
+            // Feature: Make default cursor configurable.
+            CursorShape::Default => BasicCursorShape::Block,
+            CursorShape::BlinkingBlock => BasicCursorShape::Block,
+            CursorShape::SteadyBlock => BasicCursorShape::Block,
+            CursorShape::BlinkingUnderline => BasicCursorShape::Underline,
+            CursorShape::SteadyUnderline => BasicCursorShape::Underline,
+            CursorShape::BlinkingBar => BasicCursorShape::Bar,
+            CursorShape::SteadyBar => BasicCursorShape::Bar,
+        }
+    }
+
+    fn cursor_shape(&self, shape: BasicCursorShape, pos: CursorPosition) -> Shape {
+        let cursor_color = self.color_palette.cursor_bg;
+        let cell_size = self.font.cell_size_px();
+        let left = cell_size.0 * pos.x;
+        let top = cell_size.1 * pos.y as usize;
+
+        // Feature: The size of the bar / underline should be derived from the font size / underline
+        // position / thickness, not from the cell size.
+        let stroke_thickness = ((cell_size.0 as f64 / 4.) + 1.).trunc();
+
+        let rect = match shape {
+            BasicCursorShape::Rect => {
+                return StrokeRect::new(
+                    Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _)),
+                    Size::new(stroke_thickness, stroke_thickness),
+                    color::from_srgba(cursor_color),
+                )
+                .into();
+            }
+            BasicCursorShape::Block => {
+                Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _))
+            }
+            BasicCursorShape::Underline => Rect::new(
+                (left as _, (top + self.font.ascender_px) as _),
+                (cell_size.0 as _, stroke_thickness),
+            ),
+            BasicCursorShape::Bar => {
+                Rect::new((left as _, top as _), (stroke_thickness, cell_size.1 as _))
+            }
+        };
+
+        massive_shapes::Rect::new(rect, color::from_srgba(cursor_color)).into()
+    }
+}
+
+enum BasicCursorShape {
+    Rect,
+    Block,
+    Underline,
+    Bar,
+}
+
+// Lines
+
+impl Panel {
     pub fn update_lines(
         &mut self,
         // Not used, we don't stage new objects here (yet!).
@@ -88,7 +172,6 @@ impl Panel {
             let top = line_index * self.font.font_height_px();
             let shapes = self.line_to_shapes(&mut font_system, top, line)?;
             self.line_visuals[line_index].update_with(|v| {
-                // Appreciate: This converts a Vec<Shape> directly into a Arc<[Shape]>.
                 v.shapes = shapes.into();
             });
         }
@@ -204,7 +287,7 @@ fn cluster_to_run(
     }
 
     // Precision: Clarify what color profile we are actually using and document this in the massive Color.
-    let (r, g, b, a) = color_palette.resolve_fg(attributes.foreground()).into();
+    let fg_color = color_palette.resolve_fg(attributes.foreground());
     // Feature: Support a base weight.
     let weight = match attributes.intensity() {
         Intensity::Half => TextWeight::LIGHT,
@@ -221,10 +304,19 @@ fn cluster_to_run(
             max_descent: font.descender_px as u32,
             width: (cell_width * font.glyph_advance_px) as u32,
         },
-        text_color: (r, g, b, a).into(),
+        text_color: color::from_srgba(fg_color),
         text_weight: weight,
         glyphs,
     };
 
     Ok(Some(run))
+}
+
+mod color {
+    use massive_geometry::Color;
+    use termwiz::color::SrgbaTuple;
+
+    pub fn from_srgba(SrgbaTuple(r, g, b, a): SrgbaTuple) -> Color {
+        (r, g, b, a).into()
+    }
 }

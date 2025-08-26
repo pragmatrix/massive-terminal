@@ -19,7 +19,7 @@ use tracing::error;
 
 use massive_shell::{ApplicationContext, RendererMessage, shell};
 use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize, color};
-use winit::dpi::PhysicalSize;
+use winit::{dpi::PhysicalSize, event::WindowEvent};
 
 mod panel;
 mod terminal_font;
@@ -171,6 +171,7 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
         &scene,
     );
 
+    let mut window_focused = false;
     loop {
         let shell_event_opt = select! {
             output = shell_output.recv() => {
@@ -185,6 +186,23 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
                 Some(shell_event?)
             }
         };
+
+        let event = if let Some(event) = &shell_event_opt
+            && let Some(window_event) = event.window_event_for(&window)
+        {
+            process_window_event(window_event)
+        } else {
+            None
+        };
+
+        if let Some(event) = event {
+            match event {
+                Event::Focus(focused) => {
+                    window_focused = focused;
+                    terminal.focus_changed(focused);
+                }
+            }
+        }
 
         // Performance: We begin an update cycle whenever the terminal advances. This should
         // probably be done asynchronously, deferred, etc. But note that the renderer is also
@@ -206,8 +224,6 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
             // Production: Add a kind of view into the stable rows?
             let lines_changed_stable =
                 screen.get_changed_stable_rows(view_stable_range, last_rendered_seq_no);
-
-            println!("Lines changed: {}", lines_changed_stable.len());
 
             let mut set = RangeSet::new();
             lines_changed_stable.into_iter().for_each(|l| set.add(l));
@@ -239,6 +255,13 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
             last_rendered_seq_no = terminal.current_seqno()
         }
 
+        // Cursor
+
+        {
+            let pos = terminal.cursor_pos();
+            panel.update_cursor(&scene, pos, window_focused);
+        }
+
         // Center
 
         {
@@ -256,11 +279,47 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
 
             panel_matrix.update_if_changed(center_transform);
         }
-
-        //io::stdout().write_all(&output?)?;
     }
 
     // Ok(())
+}
+
+enum Event {
+    Focus(bool),
+}
+
+fn process_window_event(event: &WindowEvent) -> Option<Event> {
+    match event {
+        WindowEvent::ActivationTokenDone { .. } => {}
+        WindowEvent::Resized { .. } => {}
+        WindowEvent::Moved { .. } => {}
+        WindowEvent::CloseRequested => {}
+        WindowEvent::Destroyed => {}
+        WindowEvent::DroppedFile(_) => {}
+        WindowEvent::HoveredFile(_) => {}
+        WindowEvent::HoveredFileCancelled => {}
+        WindowEvent::Focused(focused) => return Some(Event::Focus(*focused)),
+        WindowEvent::KeyboardInput { .. } => {}
+        WindowEvent::ModifiersChanged(_) => {}
+        WindowEvent::Ime(_) => {}
+        WindowEvent::CursorMoved { .. } => {}
+        WindowEvent::CursorEntered { .. } => {}
+        WindowEvent::CursorLeft { .. } => {}
+        WindowEvent::MouseWheel { .. } => {}
+        WindowEvent::MouseInput { .. } => {}
+        WindowEvent::PinchGesture { .. } => {}
+        WindowEvent::PanGesture { .. } => {}
+        WindowEvent::DoubleTapGesture { .. } => {}
+        WindowEvent::RotationGesture { .. } => {}
+        WindowEvent::TouchpadPressure { .. } => {}
+        WindowEvent::AxisMotion { .. } => {}
+        WindowEvent::Touch(_) => {}
+        WindowEvent::ScaleFactorChanged { .. } => {}
+        WindowEvent::ThemeChanged(_) => {}
+        WindowEvent::Occluded(_) => {}
+        WindowEvent::RedrawRequested => {}
+    }
+    None
 }
 
 #[derive(Debug)]
