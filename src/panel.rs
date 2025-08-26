@@ -8,10 +8,13 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use termwiz::{cellcluster::CellCluster, color::ColorAttribute, surface::CursorVisibility};
+use termwiz::{
+    cellcluster::CellCluster,
+    surface::{CursorShape, CursorVisibility},
+};
 use wezterm_term::{CursorPosition, Intensity, Line, color::ColorPalette};
 
-use massive_geometry::{Color, Identity, Rect};
+use massive_geometry::{Identity, Rect};
 use massive_scene::{Handle, Location, Matrix, Scene, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, TextWeight};
 
@@ -86,19 +89,63 @@ impl Panel {
                 self.cursor = None;
             }
             CursorVisibility::Visible => {
-                let cell_size = self.font.cell_size_px();
-                let left = cell_size.0 * pos.x;
-                let top = cell_size.1 * pos.y as usize;
-                let shape: Shape = massive_shapes::Rect {
-                    rect: Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _)),
-                    color: Color::WHITE,
-                }
-                .into();
+                let basic_shape = Self::basic_cursor_shape(pos.shape);
+                let shape = self.cursor_shape(basic_shape, pos);
                 let visual = Visual::new(self.scroll_location.clone(), [shape]);
                 self.cursor = Some(scene.stage(visual));
             }
         }
     }
+
+    fn basic_cursor_shape(shape: CursorShape) -> BasicCursorShape {
+        match shape {
+            // Feature: Make default cursor configurable.
+            CursorShape::Default => BasicCursorShape::Block,
+            CursorShape::BlinkingBlock => BasicCursorShape::Block,
+            CursorShape::SteadyBlock => BasicCursorShape::Block,
+            CursorShape::BlinkingUnderline => BasicCursorShape::Underline,
+            CursorShape::SteadyUnderline => BasicCursorShape::Underline,
+            CursorShape::BlinkingBar => BasicCursorShape::Bar,
+            CursorShape::SteadyBar => BasicCursorShape::Bar,
+        }
+    }
+
+    fn cursor_shape(&self, shape: BasicCursorShape, pos: CursorPosition) -> Shape {
+        let cursor_color = self.color_palette.cursor_bg;
+        let cell_size = self.font.cell_size_px();
+        println!("sz: {cell_size:?}");
+        let left = cell_size.0 * pos.x;
+        let top = cell_size.1 * pos.y as usize;
+
+        // Feature: The size of the bar / underline should be derived from the font size / underline
+        // position / thickness, not from the cell size.
+        let stroke_thickness = ((cell_size.0 as f64 / 4.) + 1.).trunc();
+
+        let rect = match shape {
+            BasicCursorShape::Block => {
+                Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _))
+            }
+            BasicCursorShape::Underline => Rect::new(
+                (left as _, (top + self.font.ascender_px) as _),
+                (cell_size.0 as _, stroke_thickness),
+            ),
+            BasicCursorShape::Bar => {
+                Rect::new((left as _, top as _), (stroke_thickness, cell_size.1 as _))
+            }
+        };
+
+        massive_shapes::Rect {
+            rect,
+            color: color::from_srgba(cursor_color),
+        }
+        .into()
+    }
+}
+
+enum BasicCursorShape {
+    Block,
+    Underline,
+    Bar,
 }
 
 // Lines
@@ -233,7 +280,7 @@ fn cluster_to_run(
     }
 
     // Precision: Clarify what color profile we are actually using and document this in the massive Color.
-    let (r, g, b, a) = color_palette.resolve_fg(attributes.foreground()).into();
+    let fg_color = color_palette.resolve_fg(attributes.foreground());
     // Feature: Support a base weight.
     let weight = match attributes.intensity() {
         Intensity::Half => TextWeight::LIGHT,
@@ -250,10 +297,19 @@ fn cluster_to_run(
             max_descent: font.descender_px as u32,
             width: (cell_width * font.glyph_advance_px) as u32,
         },
-        text_color: (r, g, b, a).into(),
+        text_color: color::from_srgba(fg_color),
         text_weight: weight,
         glyphs,
     };
 
     Ok(Some(run))
+}
+
+mod color {
+    use massive_geometry::Color;
+    use termwiz::color::SrgbaTuple;
+
+    pub fn from_srgba(SrgbaTuple(r, g, b, a): SrgbaTuple) -> Color {
+        (r, g, b, a).into()
+    }
 }
