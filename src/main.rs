@@ -225,8 +225,6 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
             let lines_changed_stable =
                 screen.get_changed_stable_rows(view_stable_range, last_rendered_seq_no);
 
-            println!("Lines changed: {}", lines_changed_stable.len());
-
             let mut set = RangeSet::new();
             lines_changed_stable.into_iter().for_each(|l| set.add(l));
 
