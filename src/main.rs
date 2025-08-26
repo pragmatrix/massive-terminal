@@ -19,7 +19,7 @@ use tracing::error;
 
 use massive_shell::{ApplicationContext, RendererMessage, shell};
 use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize, color};
-use winit::dpi::PhysicalSize;
+use winit::{dpi::PhysicalSize, event::WindowEvent};
 
 mod panel;
 mod terminal_font;
@@ -171,6 +171,7 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
         &scene,
     );
 
+    let mut window_focused = false;
     loop {
         let shell_event_opt = select! {
             output = shell_output.recv() => {
@@ -185,6 +186,23 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
                 Some(shell_event?)
             }
         };
+
+        let event = if let Some(event) = &shell_event_opt
+            && let Some(window_event) = event.window_event_for(&window)
+        {
+            process_window_event(window_event)
+        } else {
+            None
+        };
+
+        if let Some(event) = event {
+            match event {
+                Event::Focus(focused) => {
+                    window_focused = focused;
+                    terminal.focus_changed(focused);
+                }
+            }
+        }
 
         // Performance: We begin an update cycle whenever the terminal advances. This should
         // probably be done asynchronously, deferred, etc. But note that the renderer is also
@@ -241,8 +259,10 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
 
         // Cursor
 
-        let pos = terminal.cursor_pos();
-        panel.update_cursor(&scene, pos);
+        {
+            let pos = terminal.cursor_pos();
+            panel.update_cursor(&scene, pos, window_focused);
+        }
 
         // Center
 
@@ -261,11 +281,86 @@ async fn massive_terminal(mut context: ApplicationContext) -> Result<()> {
 
             panel_matrix.update_if_changed(center_transform);
         }
-
-        //io::stdout().write_all(&output?)?;
     }
 
     // Ok(())
+}
+
+enum Event {
+    Focus(bool),
+}
+
+fn process_window_event(event: &WindowEvent) -> Option<Event> {
+    #[allow(unused)]
+    match event {
+        WindowEvent::ActivationTokenDone { serial, token } => {}
+        WindowEvent::Resized(physical_size) => {}
+        WindowEvent::Moved(physical_position) => {}
+        WindowEvent::CloseRequested => {}
+        WindowEvent::Destroyed => {}
+        WindowEvent::DroppedFile(path_buf) => {}
+        WindowEvent::HoveredFile(path_buf) => {}
+        WindowEvent::HoveredFileCancelled => {}
+        WindowEvent::Focused(focused) => return Some(Event::Focus(*focused)),
+        WindowEvent::KeyboardInput {
+            device_id,
+            event,
+            is_synthetic,
+        } => {}
+        WindowEvent::ModifiersChanged(modifiers) => {}
+        WindowEvent::Ime(ime) => {}
+        WindowEvent::CursorMoved {
+            device_id,
+            position,
+        } => {}
+        WindowEvent::CursorEntered { device_id } => {}
+        WindowEvent::CursorLeft { device_id } => {}
+        WindowEvent::MouseWheel {
+            device_id,
+            delta,
+            phase,
+        } => {}
+        WindowEvent::MouseInput {
+            device_id,
+            state,
+            button,
+        } => {}
+        WindowEvent::PinchGesture {
+            device_id,
+            delta,
+            phase,
+        } => {}
+        WindowEvent::PanGesture {
+            device_id,
+            delta,
+            phase,
+        } => {}
+        WindowEvent::DoubleTapGesture { device_id } => {}
+        WindowEvent::RotationGesture {
+            device_id,
+            delta,
+            phase,
+        } => {}
+        WindowEvent::TouchpadPressure {
+            device_id,
+            pressure,
+            stage,
+        } => {}
+        WindowEvent::AxisMotion {
+            device_id,
+            axis,
+            value,
+        } => {}
+        WindowEvent::Touch(touch) => {}
+        WindowEvent::ScaleFactorChanged {
+            scale_factor,
+            inner_size_writer,
+        } => {}
+        WindowEvent::ThemeChanged(theme) => {}
+        WindowEvent::Occluded(_) => {}
+        WindowEvent::RedrawRequested => {}
+    }
+    None
 }
 
 #[derive(Debug)]

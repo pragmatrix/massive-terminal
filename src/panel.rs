@@ -14,9 +14,9 @@ use termwiz::{
 };
 use wezterm_term::{CursorPosition, Intensity, Line, color::ColorPalette};
 
-use massive_geometry::{Identity, Rect};
+use massive_geometry::{Identity, Rect, Size};
 use massive_scene::{Handle, Location, Matrix, Scene, Visual};
-use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, TextWeight};
+use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 
 use crate::TerminalFont;
 
@@ -83,13 +83,13 @@ impl Panel {
 // Cursor
 
 impl Panel {
-    pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition) {
+    pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, focused: bool) {
         match pos.visibility {
             CursorVisibility::Hidden => {
                 self.cursor = None;
             }
             CursorVisibility::Visible => {
-                let basic_shape = Self::basic_cursor_shape(pos.shape);
+                let basic_shape = Self::basic_cursor_shape(pos.shape, focused);
                 let shape = self.cursor_shape(basic_shape, pos);
                 let visual = Visual::new(self.scroll_location.clone(), [shape]);
                 self.cursor = Some(scene.stage(visual));
@@ -97,7 +97,10 @@ impl Panel {
         }
     }
 
-    fn basic_cursor_shape(shape: CursorShape) -> BasicCursorShape {
+    fn basic_cursor_shape(shape: CursorShape, focused: bool) -> BasicCursorShape {
+        if !focused {
+            return BasicCursorShape::Rect;
+        }
         match shape {
             // Feature: Make default cursor configurable.
             CursorShape::Default => BasicCursorShape::Block,
@@ -113,7 +116,6 @@ impl Panel {
     fn cursor_shape(&self, shape: BasicCursorShape, pos: CursorPosition) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font.cell_size_px();
-        println!("sz: {cell_size:?}");
         let left = cell_size.0 * pos.x;
         let top = cell_size.1 * pos.y as usize;
 
@@ -122,6 +124,14 @@ impl Panel {
         let stroke_thickness = ((cell_size.0 as f64 / 4.) + 1.).trunc();
 
         let rect = match shape {
+            BasicCursorShape::Rect => {
+                return StrokeRect::new(
+                    Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _)),
+                    Size::new(stroke_thickness, stroke_thickness),
+                    color::from_srgba(cursor_color),
+                )
+                .into();
+            }
             BasicCursorShape::Block => {
                 Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _))
             }
@@ -134,15 +144,12 @@ impl Panel {
             }
         };
 
-        massive_shapes::Rect {
-            rect,
-            color: color::from_srgba(cursor_color),
-        }
-        .into()
+        massive_shapes::Rect::new(rect, color::from_srgba(cursor_color)).into()
     }
 }
 
 enum BasicCursorShape {
+    Rect,
     Block,
     Underline,
     Bar,
