@@ -289,72 +289,33 @@ enum Event {
 }
 
 fn process_window_event(event: &WindowEvent) -> Option<Event> {
-    #[allow(unused)]
     match event {
-        WindowEvent::ActivationTokenDone { serial, token } => {}
-        WindowEvent::Resized(physical_size) => {}
-        WindowEvent::Moved(physical_position) => {}
+        WindowEvent::ActivationTokenDone { .. } => {}
+        WindowEvent::Resized { .. } => {}
+        WindowEvent::Moved { .. } => {}
         WindowEvent::CloseRequested => {}
         WindowEvent::Destroyed => {}
-        WindowEvent::DroppedFile(path_buf) => {}
-        WindowEvent::HoveredFile(path_buf) => {}
+        WindowEvent::DroppedFile(_) => {}
+        WindowEvent::HoveredFile(_) => {}
         WindowEvent::HoveredFileCancelled => {}
         WindowEvent::Focused(focused) => return Some(Event::Focus(*focused)),
-        WindowEvent::KeyboardInput {
-            device_id,
-            event,
-            is_synthetic,
-        } => {}
-        WindowEvent::ModifiersChanged(modifiers) => {}
-        WindowEvent::Ime(ime) => {}
-        WindowEvent::CursorMoved {
-            device_id,
-            position,
-        } => {}
-        WindowEvent::CursorEntered { device_id } => {}
-        WindowEvent::CursorLeft { device_id } => {}
-        WindowEvent::MouseWheel {
-            device_id,
-            delta,
-            phase,
-        } => {}
-        WindowEvent::MouseInput {
-            device_id,
-            state,
-            button,
-        } => {}
-        WindowEvent::PinchGesture {
-            device_id,
-            delta,
-            phase,
-        } => {}
-        WindowEvent::PanGesture {
-            device_id,
-            delta,
-            phase,
-        } => {}
-        WindowEvent::DoubleTapGesture { device_id } => {}
-        WindowEvent::RotationGesture {
-            device_id,
-            delta,
-            phase,
-        } => {}
-        WindowEvent::TouchpadPressure {
-            device_id,
-            pressure,
-            stage,
-        } => {}
-        WindowEvent::AxisMotion {
-            device_id,
-            axis,
-            value,
-        } => {}
-        WindowEvent::Touch(touch) => {}
-        WindowEvent::ScaleFactorChanged {
-            scale_factor,
-            inner_size_writer,
-        } => {}
-        WindowEvent::ThemeChanged(theme) => {}
+        WindowEvent::KeyboardInput { .. } => {}
+        WindowEvent::ModifiersChanged(_) => {}
+        WindowEvent::Ime(_) => {}
+        WindowEvent::CursorMoved { .. } => {}
+        WindowEvent::CursorEntered { .. } => {}
+        WindowEvent::CursorLeft { .. } => {}
+        WindowEvent::MouseWheel { .. } => {}
+        WindowEvent::MouseInput { .. } => {}
+        WindowEvent::PinchGesture { .. } => {}
+        WindowEvent::PanGesture { .. } => {}
+        WindowEvent::DoubleTapGesture { .. } => {}
+        WindowEvent::RotationGesture { .. } => {}
+        WindowEvent::TouchpadPressure { .. } => {}
+        WindowEvent::AxisMotion { .. } => {}
+        WindowEvent::Touch(_) => {}
+        WindowEvent::ScaleFactorChanged { .. } => {}
+        WindowEvent::ThemeChanged(_) => {}
         WindowEvent::Occluded(_) => {}
         WindowEvent::RedrawRequested => {}
     }
