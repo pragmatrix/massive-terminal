@@ -1,12 +1,13 @@
 use std::{
     collections::VecDeque,
+    ops::Range,
     sync::{Arc, Mutex},
 };
 
 use anyhow::{Result, bail};
 use cosmic_text::{
-    Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
-    Wrap,
+    Attrs, AttrsList, BufferLine, CacheKey, Cursor, Family, FontSystem, LineEnding, Shaping,
+    SubpixelBin, Wrap,
 };
 use termwiz::{
     cellcluster::CellCluster,
@@ -34,9 +35,20 @@ pub struct Panel {
     color_palette: ColorPalette,
 
     /// The matrix all visuals are transformed with.
+    ///
+    /// This effectively moves all lines _only_ up.
+    scroll_matrix: Handle<Matrix>,
     scroll_location: Handle<Location>,
-    // VecDeque because we want to optimize them for scrolling.
-    line_visuals: VecDeque<Handle<Visual>>,
+    /// The number of lines with which _all_ lines are transformed upwards. If the view scrolls up and a new line
+    /// comes in on the bottom, this increases.
+    scroll_offset: isize,
+
+    /// The visible lines. This contains _only_ the lines currently visible in the terminal.
+    ///
+    /// No lines for the scrollback. And if we are _inside_ the scrollback buffer, no lines below.
+    ///
+    /// VecDeque because we want to optimize them for scrolling.
+    visible_lines: VecDeque<Handle<Visual>>,
     cursor: Option<Handle<Visual>>,
 }
 
@@ -73,8 +85,10 @@ impl Panel {
             font_system,
             font,
             color_palette: ColorPalette::default(),
+            scroll_offset: 0,
+            scroll_matrix,
             scroll_location,
-            line_visuals,
+            visible_lines: line_visuals,
             cursor: None,
         }
     }
@@ -117,7 +131,9 @@ impl Panel {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font.cell_size_px();
         let left = cell_size.0 * pos.x;
-        let top = cell_size.1 * pos.y as usize;
+        // pos is screen relative, but we do attach the cursor visual to the scroll matrix, so have
+        // to add scroll offset here.
+        let top = cell_size.1 as f64 * (pos.y as f64 + self.scroll_offset as f64);
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
         // position / thickness, not from the cell size.
@@ -126,7 +142,7 @@ impl Panel {
         let rect = match shape {
             BasicCursorShape::Rect => {
                 return StrokeRect::new(
-                    Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _)),
+                    Rect::new((left as _, top), (cell_size.0 as _, cell_size.1 as _)),
                     Size::new(stroke_thickness, stroke_thickness),
                     color::from_srgba(cursor_color),
                 )
@@ -136,7 +152,7 @@ impl Panel {
                 Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _))
             }
             BasicCursorShape::Underline => Rect::new(
-                (left as _, (top + self.font.ascender_px) as _),
+                (left as _, (top + self.font.ascender_px as f64) as _),
                 (cell_size.0 as _, stroke_thickness),
             ),
             BasicCursorShape::Bar => {
@@ -158,6 +174,40 @@ enum BasicCursorShape {
 // Lines
 
 impl Panel {
+    /// Scroll all lines by delta lines. Positive: moves all lines up, negative moves all lines down.
+    /// This makes sure that empty lines are generated.
+    pub fn scroll(&mut self, delta: isize) {
+        match delta {
+            0 => {
+                return;
+            }
+            _ if delta < 0 => {
+                todo!("Scrolling down is unsupported")
+            }
+            _ => self.scroll_up(delta as usize),
+        }
+
+        self.scroll_offset += delta;
+        let new_y = -self.scroll_offset * self.font.cell_size_px().1 as isize;
+        self.scroll_matrix
+            .update(Matrix::from_translation((0., new_y as f64, 0.).into()));
+    }
+
+    fn scroll_up(&mut self, lines: usize) {
+        if lines < self.rows() {
+            self.visible_lines.rotate_left(lines);
+        }
+        let topmost_to_reset = self.rows().saturating_sub(lines);
+        self.reset_lines(topmost_to_reset..self.rows());
+    }
+
+    fn reset_lines(&mut self, range: Range<usize>) {
+        self.visible_lines.range_mut(range).for_each(|l| {
+            // Performance: Only change if not already empty?
+            l.update_with(|l| l.shapes = [].into());
+        });
+    }
+
     pub fn update_lines(
         &mut self,
         // Not used, we don't stage new objects here (yet!).
@@ -169,9 +219,10 @@ impl Panel {
 
         for (i, line) in lines.iter().enumerate() {
             let line_index = visual_line_index_top + i;
-            let top = line_index * self.font.font_height_px();
+            let top =
+                (self.scroll_offset + line_index as isize) * self.font.cell_size_px().1 as isize;
             let shapes = self.line_to_shapes(&mut font_system, top, line)?;
-            self.line_visuals[line_index].update_with(|v| {
+            self.visible_lines[line_index].update_with(|v| {
                 v.shapes = shapes.into();
             });
         }
@@ -182,7 +233,7 @@ impl Panel {
     fn line_to_shapes(
         &self,
         font_system: &mut FontSystem,
-        top: usize,
+        top: isize,
         line: &Line,
     ) -> Result<Vec<Shape>> {
         // Production: Add bidi support
@@ -210,13 +261,17 @@ impl Panel {
 
         Ok(shapes)
     }
+
+    fn rows(&self) -> usize {
+        self.visible_lines.len()
+    }
 }
 
 fn cluster_to_run(
     font_system: &mut FontSystem,
     font: &TerminalFont,
     color_palette: &ColorPalette,
-    (left, top): (usize, usize),
+    (left, top): (usize, isize),
     cluster: &CellCluster,
 ) -> Result<Option<GlyphRun>> {
     let attributes = &cluster.attrs;
