@@ -41,7 +41,7 @@ fn convert_modifiers(mods: ModifiersState) -> Modifiers {
 fn convert_key(key: &Key) -> Option<KeyCode> {
     match key {
         Key::Character(s) => {
-            // Ignore empty strings; take first char if multi-char (IME preedit may send more).
+            // Return None for empty strings; take first char if multi-char (IME preedit may send more).
             let ch = s.chars().next()?;
             Some(KeyCode::Char(ch))
         }
