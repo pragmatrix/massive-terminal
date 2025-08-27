@@ -23,7 +23,7 @@ use massive_shell::{ApplicationContext, AsyncWindowRenderer, RendererMessage, Sh
 use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize, color};
 use winit::{
     dpi::PhysicalSize,
-    event::{Modifiers, WindowEvent},
+    event::{ElementState, Modifiers, WindowEvent},
 };
 
 mod input;
@@ -233,7 +233,7 @@ impl MassiveTerminal {
             if let Some(event) = &shell_event_opt
                 && let Some(window_event) = event.window_event_for(&self.window)
             {
-                self.process_window_event(window_event);
+                self.process_window_event(window_event)?;
             }
 
             // Performance: We begin an update cycle whenever the terminal advances. This should
@@ -325,7 +325,7 @@ impl MassiveTerminal {
         // Ok(())
     }
 
-    fn process_window_event(&mut self, event: &WindowEvent) {
+    fn process_window_event(&mut self, event: &WindowEvent) -> Result<()> {
         match event {
             WindowEvent::ActivationTokenDone { .. } => {}
             WindowEvent::Resized { .. } => {}
@@ -339,7 +339,20 @@ impl MassiveTerminal {
                 self.window_state.focused = *focused;
                 self.terminal.focus_changed(*focused);
             }
-            WindowEvent::KeyboardInput { .. } => {}
+            WindowEvent::KeyboardInput { event, .. } => {
+                if let Some((key, modifiers)) =
+                    input::convert_key_event(event, self.window_state.keyboard_modifiers.state())
+                {
+                    match event.state {
+                        ElementState::Pressed => {
+                            self.terminal.key_down(key, modifiers)?;
+                        }
+                        ElementState::Released => {
+                            self.terminal.key_up(key, modifiers)?;
+                        }
+                    }
+                }
+            }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.window_state.keyboard_modifiers = *modifiers;
             }
@@ -361,6 +374,7 @@ impl MassiveTerminal {
             WindowEvent::Occluded(_) => {}
             WindowEvent::RedrawRequested => {}
         }
+        Ok(())
     }
 }
 

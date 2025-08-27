@@ -19,7 +19,7 @@ pub fn convert_key_event(event: &KeyEvent, mods: ModifiersState) -> Option<(KeyC
 }
 
 /// Convert a `winit` `ModifiersState` to `termwiz` `Modifiers`.
-pub fn convert_modifiers(mods: ModifiersState) -> Modifiers {
+fn convert_modifiers(mods: ModifiersState) -> Modifiers {
     let mut out = Modifiers::NONE;
     if mods.shift_key() {
         out |= Modifiers::SHIFT;
@@ -38,7 +38,7 @@ pub fn convert_modifiers(mods: ModifiersState) -> Modifiers {
 
 /// Convert a `winit` logical `Key` to a `termwiz` `KeyCode`.
 /// Returns `None` if the key should be ignored (e.g. pure modifier).
-pub fn convert_key(key: &Key) -> Option<KeyCode> {
+fn convert_key(key: &Key) -> Option<KeyCode> {
     match key {
         Key::Character(s) => {
             // Ignore empty strings; take first char if multi-char (IME preedit may send more).
