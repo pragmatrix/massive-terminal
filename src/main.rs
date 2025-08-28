@@ -10,8 +10,6 @@ use derive_more::Debug;
 use massive_geometry::{Camera, Color, Identity};
 use massive_scene::{Handle, Location, Matrix, Scene};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use rangeset::RangeSet;
-use termwiz::surface::SequenceNo;
 use tokio::{
     select,
     sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -20,6 +18,7 @@ use tokio::{
 use tracing::error;
 
 use massive_shell::{ApplicationContext, AsyncWindowRenderer, RendererMessage, ShellWindow, shell};
+use terminal_state::TerminalState;
 use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize, color};
 use winit::{
     dpi::PhysicalSize,
@@ -29,6 +28,7 @@ use winit::{
 mod input;
 mod panel;
 mod terminal_font;
+mod terminal_state;
 
 pub use panel::*;
 pub use terminal_font::*;
@@ -56,12 +56,13 @@ struct MassiveTerminal {
     shell_output: UnboundedReceiver<Result<Vec<u8>>>,
     #[debug(skip)]
     terminal: Terminal,
-    last_rendered_seq_no: SequenceNo,
 
     scene: Scene,
     panel: Panel,
     panel_matrix: Handle<Matrix>,
+
     window_state: WindowState,
+    terminal_state: TerminalState,
 }
 
 #[derive(Default, Debug)]
@@ -159,11 +160,11 @@ impl MassiveTerminal {
 
         let writer = pair.master.take_writer()?;
         // thread::spawn(move || {
-        //     writeln!(writer, "ls -l").unwrap();
-        //     // writer.flush().unwrap();
-        //     // drop(writer);
-        //     #[allow(clippy::empty_loop)]
-        //     loop {}
+        // writeln!(writer, "ls -l").unwrap();
+        // // writer.flush().unwrap();
+        // // drop(writer);
+        // #[allow(clippy::empty_loop)]
+        // loop {}
         // });
 
         let configuration = MassiveTerminalConfiguration {};
@@ -192,13 +193,7 @@ impl MassiveTerminal {
             matrix: panel_matrix.clone(),
         });
 
-        let panel = Panel::new(
-            font_system,
-            terminal_font,
-            terminal_size.1,
-            panel_location,
-            &scene,
-        );
+        let panel = Panel::new(font_system, terminal_font, rows, panel_location, &scene);
 
         Ok(Self {
             context,
@@ -206,17 +201,15 @@ impl MassiveTerminal {
             renderer,
             shell_output,
             terminal,
-            last_rendered_seq_no,
             scene,
             panel,
             panel_matrix,
             window_state: WindowState::default(),
+            terminal_state: TerminalState::new(last_rendered_seq_no),
         })
     }
 
     async fn run(&mut self) -> Result<()> {
-        // For scroll detection.
-        let mut current_stable_top = 0;
         loop {
             let shell_event_opt = select! {
                 output = self.shell_output.recv() => {
@@ -247,78 +240,19 @@ impl MassiveTerminal {
                 shell_event_opt.as_ref(),
             )?;
 
-            // Performance: No need to begin an update cycle if there are no visible changes
-            let update_lines = {
-                let current_seq_no = self.terminal.current_seqno();
-                assert!(current_seq_no >= self.last_rendered_seq_no);
-                current_seq_no > self.last_rendered_seq_no
-            };
+            // Update lines
 
-            if update_lines {
-                let screen = self.terminal.screen();
-                // Physical: 0: The first line at the beginning of the scrollback buffer. The first
-                // line stored in the lines of the screen.
-                //
-                // Stable: 0: The first line of the initial output. A scrolling line stays at the
-                // same index. Would be equal to physical if the scrollback buffer would be
-                // infinite.
-                //
-                // Visible: 0: Top of the screen.
+            self.terminal_state
+                .update_lines(&self.terminal, &mut self.panel, &self.scene)?;
 
-                let stable_top = screen.visible_row_to_stable_row(0);
-                if stable_top != current_stable_top {
-                    self.panel.scroll(stable_top - current_stable_top);
-                    current_stable_top = stable_top;
-                }
+            // Update cursor
 
-                let view_stable_range = stable_top..stable_top + screen.physical_rows as isize;
-
-                // Production: Add a kind of view into the stable rows?
-                let lines_changed_stable =
-                    screen.get_changed_stable_rows(view_stable_range, self.last_rendered_seq_no);
-
-                let mut set = RangeSet::new();
-                lines_changed_stable.into_iter().for_each(|l| set.add(l));
-
-                for stable_range in set.iter() {
-                    let phys_range = screen.stable_range(stable_range);
-
-                    assert!(stable_range.start >= stable_top);
-                    let visible_range_start = stable_range.start - stable_top;
-
-                    // Architecture: Going through building a set for accessing each changed line
-                    // individually does not actually make sense when we just need to access Line
-                    // references, but we can't access them directly.
-                    //
-                    // **Update**: Currently, it does make sense because of locking FontSystem only once
-                    // (but hey, this could also be bad).
-
-                    let mut r = Ok(());
-
-                    screen.with_phys_lines(phys_range, |lines| {
-                        // This is guaranteed to be called only once for all lines.
-                        r = self.panel.update_lines(
-                            &self.scene,
-                            visible_range_start as usize,
-                            lines,
-                        );
-                    });
-
-                    r?;
-                }
-
-                // Commit
-
-                self.last_rendered_seq_no = self.terminal.current_seqno()
-            }
-
-            // Cursor
-
-            {
-                let pos = self.terminal.cursor_pos();
-                self.panel
-                    .update_cursor(&self.scene, pos, self.window_state.focused);
-            }
+            TerminalState::update_cursor(
+                &self.terminal,
+                &mut self.panel,
+                self.window_state.focused,
+                &self.scene,
+            );
 
             // Center
 
