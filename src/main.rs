@@ -15,7 +15,7 @@ use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     task,
 };
-use tracing::error;
+use tracing::{error, info};
 
 use massive_shell::{ApplicationContext, AsyncWindowRenderer, RendererMessage, ShellWindow, shell};
 use terminal_state::TerminalState;
@@ -214,7 +214,8 @@ impl MassiveTerminal {
             let shell_event_opt = select! {
                 output = self.shell_output.recv() => {
                     let Some(Ok(output)) = output else {
-                        bail!("Shell output stopped");
+                        info!("Shell output stopped. Exiting.");
+                        return Ok(());
                     };
 
                     self.terminal.advance_bytes(output);
