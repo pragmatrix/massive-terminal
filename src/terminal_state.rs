@@ -12,14 +12,14 @@ use wezterm_term::{StableRowIndex, Terminal};
 pub struct TerminalState {
     pub last_rendered_seq_no: SequenceNo,
     // For scroll detection. Primary screen only.
-    pub current_stable_top: StableRowIndex,
+    pub current_stable_top_primary: StableRowIndex,
 }
 
 impl TerminalState {
     pub fn new(last_rendered_seq_no: SequenceNo) -> Self {
         Self {
             last_rendered_seq_no,
-            current_stable_top: 0,
+            current_stable_top_primary: 0,
         }
     }
 
@@ -30,6 +30,8 @@ impl TerminalState {
         panel: &mut Panel,
         scene: &Scene,
     ) -> Result<()> {
+        let alt_screen_active = terminal.is_alt_screen_active();
+
         // Performance: No need to begin an update cycle if there are no visible changes
         let update_lines = {
             let current_seq_no = terminal.current_seqno();
@@ -49,9 +51,9 @@ impl TerminalState {
             // Visible: 0: Top of the screen.
 
             let stable_top = screen.visible_row_to_stable_row(0);
-            if stable_top != self.current_stable_top {
-                panel.scroll(stable_top - self.current_stable_top);
-                self.current_stable_top = stable_top;
+            if !alt_screen_active && stable_top != self.current_stable_top_primary {
+                panel.scroll(stable_top - self.current_stable_top_primary);
+                self.current_stable_top_primary = stable_top;
             }
 
             let view_stable_range = stable_top..stable_top + screen.physical_rows as isize;
@@ -75,6 +77,10 @@ impl TerminalState {
                 //
                 // **Update**: Currently, it does make sense because of locking FontSystem only once
                 // (but hey, this could also be bad).
+                //
+                // Performance: After a terminal `clear`, all lines below the cursor are
+                // invalidated, too for some reason (there _is_ a `SequenceNo` for every line, may
+                // be there is a way to find out if the lines actually have changed).
 
                 let mut r = Ok(());
 
@@ -93,6 +99,7 @@ impl TerminalState {
         Ok(())
     }
 
+    /// Update the cursor of the panel to reflect to position in the terminal.
     // Architecture: Not sure where this belongs to.
     pub fn update_cursor(terminal: &Terminal, panel: &mut Panel, focused: bool, scene: &Scene) {
         let pos = terminal.cursor_pos();
