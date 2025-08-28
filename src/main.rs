@@ -296,6 +296,7 @@ impl MassiveTerminal {
                     let mut r = Ok(());
 
                     screen.with_phys_lines(phys_range, |lines| {
+                        // This is guaranteed to be called only once for all lines.
                         r = self.panel.update_lines(
                             &self.scene,
                             visible_range_start as usize,
