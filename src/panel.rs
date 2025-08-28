@@ -6,8 +6,8 @@ use std::{
 
 use anyhow::{Result, bail};
 use cosmic_text::{
-    Attrs, AttrsList, BufferLine, CacheKey, Cursor, Family, FontSystem, LineEnding, Shaping,
-    SubpixelBin, Wrap,
+    Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
+    Wrap,
 };
 use termwiz::{
     cellcluster::CellCluster,
