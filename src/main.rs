@@ -215,6 +215,8 @@ impl MassiveTerminal {
     }
 
     async fn run(&mut self) -> Result<()> {
+        // For scroll detection.
+        let mut current_stable_top = 0;
         loop {
             let shell_event_opt = select! {
                 output = self.shell_output.recv() => {
@@ -254,7 +256,21 @@ impl MassiveTerminal {
 
             if update_lines {
                 let screen = self.terminal.screen();
+                // Physical: 0: The first line at the beginning of the scrollback buffer. The first
+                // line stored in the lines of the screen.
+                //
+                // Stable: 0: The first line of the initial output. A scrolling line stays at the
+                // same index. Would be equal to physical if the scrollback buffer would be
+                // infinite.
+                //
+                // Visible: 0: Top of the screen.
+
                 let stable_top = screen.visible_row_to_stable_row(0);
+                if stable_top != current_stable_top {
+                    self.panel.scroll(stable_top - current_stable_top);
+                    current_stable_top = stable_top;
+                }
+
                 let view_stable_range = stable_top..stable_top + screen.physical_rows as isize;
 
                 // Production: Add a kind of view into the stable rows?
@@ -280,6 +296,7 @@ impl MassiveTerminal {
                     let mut r = Ok(());
 
                     screen.with_phys_lines(phys_range, |lines| {
+                        // This is guaranteed to be called only once for all lines.
                         r = self.panel.update_lines(
                             &self.scene,
                             visible_range_start as usize,
