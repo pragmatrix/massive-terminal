@@ -41,7 +41,7 @@ pub struct Panel {
     scroll_location: Handle<Location>,
     /// The number of lines with which _all_ lines are transformed upwards. If the view scrolls up and a new line
     /// comes in on the bottom, this increases.
-    scroll_offset: isize,
+    scroll_offset: i64,
 
     /// The visible lines. This contains _only_ the lines currently visible in the terminal.
     ///
@@ -133,7 +133,7 @@ impl Panel {
         let left = cell_size.0 * pos.x;
         // pos is screen relative, but we do attach the cursor visual to the scroll matrix, so have
         // to add scroll offset here.
-        let top = cell_size.1 as f64 * (pos.y as f64 + self.scroll_offset as f64);
+        let top = cell_size.1 as u64 * (pos.y as u64 + self.scroll_offset as u64);
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
         // position / thickness, not from the cell size.
@@ -142,7 +142,7 @@ impl Panel {
         let rect = match shape {
             BasicCursorShape::Rect => {
                 return StrokeRect::new(
-                    Rect::new((left as _, top), (cell_size.0 as _, cell_size.1 as _)),
+                    Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _)),
                     Size::new(stroke_thickness, stroke_thickness),
                     color::from_srgba(cursor_color),
                 )
@@ -152,7 +152,10 @@ impl Panel {
                 Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _))
             }
             BasicCursorShape::Underline => Rect::new(
-                (left as _, (top + self.font.ascender_px as f64) as _),
+                (
+                    left as _,
+                    ((top + self.font.ascender_px as u64) as f64) as _,
+                ),
                 (cell_size.0 as _, stroke_thickness),
             ),
             BasicCursorShape::Bar => {
@@ -187,8 +190,8 @@ impl Panel {
             _ => self.scroll_up(delta as usize),
         }
 
-        self.scroll_offset += delta;
-        let new_y = -self.scroll_offset * self.font.cell_size_px().1 as isize;
+        self.scroll_offset += delta as i64;
+        let new_y = -self.scroll_offset * self.font.cell_size_px().1 as i64;
         self.scroll_matrix
             .update(Matrix::from_translation((0., new_y as f64, 0.).into()));
     }
@@ -219,8 +222,7 @@ impl Panel {
 
         for (i, line) in lines.iter().enumerate() {
             let line_index = visual_line_index_top + i;
-            let top =
-                (self.scroll_offset + line_index as isize) * self.font.cell_size_px().1 as isize;
+            let top = (self.scroll_offset + line_index as i64) * self.font.cell_size_px().1 as i64;
             let shapes = self.line_to_shapes(&mut font_system, top, line)?;
             self.visible_lines[line_index].update_with(|v| {
                 v.shapes = shapes.into();
@@ -233,7 +235,7 @@ impl Panel {
     fn line_to_shapes(
         &self,
         font_system: &mut FontSystem,
-        top: isize,
+        top: i64,
         line: &Line,
     ) -> Result<Vec<Shape>> {
         // Production: Add bidi support
@@ -271,7 +273,7 @@ fn cluster_to_run(
     font_system: &mut FontSystem,
     font: &TerminalFont,
     color_palette: &ColorPalette,
-    (left, top): (usize, isize),
+    (left, top): (usize, i64),
     cluster: &CellCluster,
 ) -> Result<Option<GlyphRun>> {
     let attributes = &cluster.attrs;

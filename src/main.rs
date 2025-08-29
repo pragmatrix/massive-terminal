@@ -362,7 +362,7 @@ fn read_to_receiver(reader: impl io::Read + Send + 'static) -> UnboundedReceiver
                         tx.send(Ok(buf[0..bytes_read].to_vec()))?;
                     }
                     Err(e) if e.kind() == ErrorKind::Interrupted => {
-                        // as suggested, retry.
+                        // Retry as recommended.
                     }
                     Err(e) => {
                         tx.send(Err(e.into()))?;
