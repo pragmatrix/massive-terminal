@@ -58,8 +58,9 @@ impl TerminalState {
         // Visible: 0: Top of the screen.
 
         let stable_top = screen.visible_row_to_stable_row(0);
+        let mut scroll_amount = 0;
         if !alt_screen_active && stable_top != self.current_stable_top_primary {
-            panel.scroll(stable_top - self.current_stable_top_primary);
+            scroll_amount = stable_top - self.current_stable_top_primary;
             self.current_stable_top_primary = stable_top;
         }
 
@@ -103,6 +104,10 @@ impl TerminalState {
 
         // Release the terminal lock.
         drop(terminal);
+
+        if scroll_amount != 0 {
+            panel.scroll(scroll_amount);
+        }
 
         // Push the lines to the panel.
 
