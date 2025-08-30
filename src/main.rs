@@ -153,13 +153,6 @@ impl MassiveTerminal {
         // Send data to the pty by writing to the master
 
         let writer = pty_pair.master.take_writer()?;
-        // thread::spawn(move || {
-        // writeln!(writer, "ls -l").unwrap();
-        // // writer.flush().unwrap();
-        // // drop(writer);
-        // #[allow(clippy::empty_loop)]
-        // loop {}
-        // });
 
         let configuration = MassiveTerminalConfiguration {};
 
@@ -244,20 +237,14 @@ impl MassiveTerminal {
             )?;
 
             {
-                let terminal = self.terminal.lock().unwrap();
                 // Update lines
 
-                self.terminal_state
-                    .update_lines(&terminal, &mut self.panel, &self.scene)?;
-
-                // Update cursor
-
-                TerminalState::update_cursor(
-                    &terminal,
+                self.terminal_state.update(
+                    &self.terminal,
+                    &self.window_state,
                     &mut self.panel,
-                    self.window_state.focused,
                     &self.scene,
-                );
+                )?;
             }
 
             // Center
@@ -350,9 +337,11 @@ async fn dispatch_output_to_terminal(
     terminal: Arc<Mutex<Terminal>>,
     notify: Arc<Notify>,
 ) -> Result<()> {
+    // Using a thread does not make a difference here.
     let join_handle = task::spawn_blocking(move || {
         let mut buf = [0u8; 0x8000];
         loop {
+            // Usually there are not more than 1024 bytes returned on macOS.
             match reader.read(&mut buf) {
                 Ok(0) => {
                     return Ok(()); // EOF
