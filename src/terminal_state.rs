@@ -8,7 +8,7 @@ use crate::{Panel, WindowState};
 use massive_scene::Scene;
 use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
-use wezterm_term::{Line, StableRowIndex, Terminal};
+use wezterm_term::{CursorPosition, Line, StableRowIndex, Terminal};
 
 #[derive(Debug)]
 pub struct TerminalState {
@@ -99,10 +99,9 @@ impl TerminalState {
             });
         }
 
-        Self::update_cursor(&terminal, panel, window_state.focused, scene);
+        let cursor_pos = terminal.cursor_pos();
 
-        // Release the terminal.
-
+        // Release the terminal lock.
         drop(terminal);
 
         // Push the lines to the panel.
@@ -122,6 +121,8 @@ impl TerminalState {
         }
         self.line_buf.clear();
 
+        Self::update_cursor(cursor_pos, panel, window_state.focused, scene);
+
         // Commit
 
         self.last_rendered_seq_no = current_seq_no;
@@ -131,8 +132,12 @@ impl TerminalState {
 
     /// Update the cursor of the panel to reflect to position in the terminal.
     // Architecture: Not sure where this belongs to.
-    pub fn update_cursor(terminal: &Terminal, panel: &mut Panel, focused: bool, scene: &Scene) {
-        let pos = terminal.cursor_pos();
-        panel.update_cursor(scene, pos, focused);
+    pub fn update_cursor(
+        cursor_pos: CursorPosition,
+        panel: &mut Panel,
+        focused: bool,
+        scene: &Scene,
+    ) {
+        panel.update_cursor(scene, cursor_pos, focused);
     }
 }
