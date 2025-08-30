@@ -74,8 +74,8 @@ impl TerminalState {
         lines_changed_stable.into_iter().for_each(|l| set.add(l));
         let set = set;
 
-        // ADR: Decided to keep the time we lock the Termina as short as possible, so that new data
-        // can be fed in as fast as possilbe.
+        // ADR: Decided to keep the time we lock the Terminal as short as possible, so that new data
+        // can be fed in as fast as possible.
 
         for stable_range in set.iter() {
             let phys_range = screen.stable_range(stable_range);
