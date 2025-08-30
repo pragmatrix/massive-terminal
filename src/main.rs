@@ -3,19 +3,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::anyhow;
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow};
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
 use massive_geometry::{Camera, Color, Identity};
 use massive_scene::{Handle, Location, Matrix, Scene};
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use tokio::{
-    select,
-    sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
-    task,
-};
-use tracing::{error, info};
+use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
+use tokio::{pin, select, sync::Notify, task};
+use tracing::info;
 
 use massive_shell::{ApplicationContext, AsyncWindowRenderer, RendererMessage, ShellWindow, shell};
 use terminal_state::TerminalState;
@@ -53,9 +48,12 @@ struct MassiveTerminal {
     context: ApplicationContext,
     window: ShellWindow,
     renderer: AsyncWindowRenderer,
-    shell_output: UnboundedReceiver<Result<Vec<u8>>>,
+
     #[debug(skip)]
-    terminal: Terminal,
+    pty_pair: PtyPair,
+
+    #[debug(skip)]
+    terminal: Arc<Mutex<Terminal>>,
 
     scene: Scene,
     panel: Panel,
@@ -138,7 +136,7 @@ impl MassiveTerminal {
         let (columns, rows) = terminal_size;
 
         // Create a new pty
-        let pair = pty_system.openpty(PtySize {
+        let pty_pair = pty_system.openpty(PtySize {
             rows: rows as _,
             cols: columns as _,
             // Robustness: is this physical or logical size, and what does a terminal actually do with it?
@@ -148,24 +146,13 @@ impl MassiveTerminal {
 
         let cmd = CommandBuilder::new_default_prog();
 
-        let _child = pair.slave.spawn_command(cmd)?;
-
-        // Read and parse output from the pty with reader
-        let reader = pair.master.try_clone_reader()?;
-        let shell_output = read_to_receiver(reader);
+        let _child = pty_pair.slave.spawn_command(cmd)?;
 
         // Noone knows here what and when anything blocks, so we create two channels for writing and on
         // for reading from the pty.
         // Send data to the pty by writing to the master
 
-        let writer = pair.master.take_writer()?;
-        // thread::spawn(move || {
-        // writeln!(writer, "ls -l").unwrap();
-        // // writer.flush().unwrap();
-        // // drop(writer);
-        // #[allow(clippy::empty_loop)]
-        // loop {}
-        // });
+        let writer = pty_pair.master.take_writer()?;
 
         let configuration = MassiveTerminalConfiguration {};
 
@@ -184,6 +171,7 @@ impl MassiveTerminal {
             writer,
         );
         let last_rendered_seq_no = terminal.current_seqno();
+        let terminal = Arc::new(Mutex::new(terminal));
 
         let scene = Scene::new();
 
@@ -199,7 +187,7 @@ impl MassiveTerminal {
             context,
             window,
             renderer,
-            shell_output,
+            pty_pair,
             terminal,
             scene,
             panel,
@@ -210,15 +198,22 @@ impl MassiveTerminal {
     }
 
     async fn run(&mut self) -> Result<()> {
+        let notify = Arc::new(Notify::new());
+        // Read and parse output from the pty with reader
+        let reader = self.pty_pair.master.try_clone_reader()?;
+
+        let output_dispatcher =
+            dispatch_output_to_terminal(reader, self.terminal.clone(), notify.clone());
+
+        pin!(output_dispatcher);
+
         loop {
             let shell_event_opt = select! {
-                output = self.shell_output.recv() => {
-                    let Some(Ok(output)) = output else {
-                        info!("Shell output stopped. Exiting.");
-                        return Ok(());
-                    };
-
-                    self.terminal.advance_bytes(output);
+                r = &mut output_dispatcher => {
+                    info!("Shell output stopped. Exiting.");
+                    return r;
+                }
+                _ = notify.notified() => {
                     None
                 }
                 shell_event = self.context.wait_for_shell_event(&mut self.renderer) => {
@@ -241,19 +236,16 @@ impl MassiveTerminal {
                 shell_event_opt.as_ref(),
             )?;
 
-            // Update lines
+            {
+                // Update lines
 
-            self.terminal_state
-                .update_lines(&self.terminal, &mut self.panel, &self.scene)?;
-
-            // Update cursor
-
-            TerminalState::update_cursor(
-                &self.terminal,
-                &mut self.panel,
-                self.window_state.focused,
-                &self.scene,
-            );
+                self.terminal_state.update(
+                    &self.terminal,
+                    &self.window_state,
+                    &mut self.panel,
+                    &self.scene,
+                )?;
+            }
 
             // Center
 
@@ -289,7 +281,7 @@ impl MassiveTerminal {
             WindowEvent::HoveredFileCancelled => {}
             WindowEvent::Focused(focused) => {
                 self.window_state.focused = *focused;
-                self.terminal.focus_changed(*focused);
+                self.terminal.lock().unwrap().focus_changed(*focused);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some((key, modifiers)) =
@@ -297,10 +289,10 @@ impl MassiveTerminal {
                 {
                     match event.state {
                         ElementState::Pressed => {
-                            self.terminal.key_down(key, modifiers)?;
+                            self.terminal.lock().unwrap().key_down(key, modifiers)?;
                         }
                         ElementState::Released => {
-                            self.terminal.key_up(key, modifiers)?;
+                            self.terminal.lock().unwrap().key_up(key, modifiers)?;
                         }
                     }
                 }
@@ -340,38 +332,31 @@ impl TerminalConfiguration for MassiveTerminalConfiguration {
     }
 }
 
-fn read_to_receiver(reader: impl io::Read + Send + 'static) -> UnboundedReceiver<Result<Vec<u8>>> {
-    let (tx, rx) = unbounded_channel();
-
-    task::spawn_blocking(move || {
-        if let Err(e) = lp(reader, tx) {
-            error!("Reader ended unexpectedly: {e:?}")
-        }
-
-        fn lp(
-            mut reader: impl io::Read + Send + 'static,
-            tx: UnboundedSender<Result<Vec<u8>>>,
-        ) -> Result<()> {
-            let mut buf = [0u8; 0x8000];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => {
-                        return Ok(()); // EOF
-                    }
-                    Ok(bytes_read) => {
-                        tx.send(Ok(buf[0..bytes_read].to_vec()))?;
-                    }
-                    Err(e) if e.kind() == ErrorKind::Interrupted => {
-                        // Retry as recommended.
-                    }
-                    Err(e) => {
-                        tx.send(Err(e.into()))?;
-                        bail!("Reader ended because of an error the receiver must handle.")
-                    }
+async fn dispatch_output_to_terminal(
+    mut reader: impl io::Read + Send + 'static,
+    terminal: Arc<Mutex<Terminal>>,
+    notify: Arc<Notify>,
+) -> Result<()> {
+    // Using a thread does not make a difference here.
+    let join_handle = task::spawn_blocking(move || {
+        let mut buf = [0u8; 0x8000];
+        loop {
+            // Usually there are not more than 1024 bytes returned on macOS.
+            match reader.read(&mut buf) {
+                Ok(0) => {
+                    return Ok(()); // EOF
                 }
+                Ok(bytes_read) => {
+                    terminal.lock().unwrap().advance_bytes(&buf[0..bytes_read]);
+                    notify.notify_one();
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {
+                    // Retry as recommended.
+                }
+                Err(e) => return Result::Err(e),
             }
         }
     });
 
-    rx
+    Ok(join_handle.await??)
 }

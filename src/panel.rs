@@ -216,7 +216,7 @@ impl Panel {
         // Not used, we don't stage new objects here (yet!).
         _scene: &Scene,
         visual_line_index_top: usize,
-        lines: &[&Line],
+        lines: &[Line],
     ) -> Result<()> {
         let mut font_system = self.font_system.lock().unwrap();
 
