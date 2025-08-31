@@ -54,6 +54,7 @@ itertools = "0.14.0"
 log = "0.4.19"
 serde = { version = "1.0.164", features = ["derive"] }
 serde_tuple = "1.1.2"
+smallbox = { version = "0.8.8" }
 static_assertions = "1.1.0"
 swash = "0.2.5"
 sys-locale = { version = "0.3.2" }
