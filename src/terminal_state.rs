@@ -38,66 +38,64 @@ impl TerminalState {
         let terminal = terminal.lock().unwrap();
         let alt_screen_active = terminal.is_alt_screen_active();
 
+        let screen = terminal.screen();
+
         // Performance: No need to begin an update cycle if there are no visible changes
         let current_seq_no = terminal.current_seqno();
-        let update_lines = current_seq_no > self.last_rendered_seq_no;
-
-        if !update_lines {
-            assert!(current_seq_no >= self.last_rendered_seq_no);
-            return Ok(());
-        }
-
-        let screen = terminal.screen();
-        // Physical: 0: The first line at the beginning of the scrollback buffer. The first
-        // line stored in the lines of the screen.
-        //
-        // Stable: 0: The first line of the initial output. A scrolling line stays at the
-        // same index. Would be equal to physical if the scrollback buffer would be
-        // infinite.
-        //
-        // Visible: 0: Top of the screen.
-
-        let stable_top = screen.visible_row_to_stable_row(0);
+        let terminal_updated = current_seq_no > self.last_rendered_seq_no;
+        assert!(current_seq_no >= self.last_rendered_seq_no);
         let mut scroll_amount = 0;
-        if !alt_screen_active && stable_top != self.current_stable_top_primary {
-            scroll_amount = stable_top - self.current_stable_top_primary;
-            self.current_stable_top_primary = stable_top;
-        }
-
-        let view_stable_range = stable_top..stable_top + screen.physical_rows as isize;
-
-        // Production: Add a kind of view into the stable rows?
-        let lines_changed_stable =
-            screen.get_changed_stable_rows(view_stable_range, self.last_rendered_seq_no);
-
+        let stable_top = screen.visible_row_to_stable_row(0);
         let mut set = RangeSet::new();
-        lines_changed_stable.into_iter().for_each(|l| set.add(l));
-        let set = set;
 
-        // ADR: Decided to keep the time we lock the Terminal as short as possible, so that new data
-        // can be fed in as fast as possible.
-
-        for stable_range in set.iter() {
-            let phys_range = screen.stable_range(stable_range);
-            assert!(stable_range.start >= stable_top);
-            // let visible_range_start = stable_range.start - stable_top;
-
-            // Architecture: Going through building a set for accessing each changed line
-            // individually does not actually make sense when we just need to access Line
-            // references, but we can't access them directly.
+        if terminal_updated {
+            // Physical: 0: The first line at the beginning of the scrollback buffer. The first
+            // line stored in the lines of the screen.
             //
-            // **Update**: Currently, it does make sense because of locking FontSystem only once
-            // (but hey, this could also be bad).
+            // Stable: 0: The first line of the initial output. A scrolling line stays at the
+            // same index. Would be equal to physical if the scrollback buffer would be
+            // infinite.
             //
-            // Performance: After a terminal `clear`, all lines below the cursor are
-            // invalidated, too for some reason (there _is_ a `SequenceNo` for every line, may
-            // be there is a way to find out if the lines actually have changed).
+            // Visible: 0: Top of the screen.
 
-            screen.with_phys_lines(phys_range, |lines| {
-                // This is guaranteed to be called only once for all lines.
-                self.line_buf.extend(lines.iter().copied().cloned());
-                // r = panel.update_lines(scene, visible_range_start as usize, lines);
-            });
+            if !alt_screen_active && stable_top != self.current_stable_top_primary {
+                scroll_amount = stable_top - self.current_stable_top_primary;
+                self.current_stable_top_primary = stable_top;
+            }
+
+            let view_stable_range = stable_top..stable_top + screen.physical_rows as isize;
+
+            // Production: Add a kind of view into the stable rows?
+            let lines_changed_stable =
+                screen.get_changed_stable_rows(view_stable_range, self.last_rendered_seq_no);
+
+            lines_changed_stable.into_iter().for_each(|l| set.add(l));
+
+            // ADR: Decided to keep the time we lock the Terminal as short as possible, so that new data
+            // can be fed in as fast as possible.
+
+            for stable_range in set.iter() {
+                let phys_range = screen.stable_range(stable_range);
+                assert!(stable_range.start >= stable_top);
+                // let visible_range_start = stable_range.start - stable_top;
+
+                // Architecture: Going through building a set for accessing each changed line
+                // individually does not actually make sense when we just need to access Line
+                // references, but we can't access them directly.
+                //
+                // **Update**: Currently, it does make sense because of locking FontSystem only once
+                // (but hey, this could also be bad).
+                //
+                // Performance: After a terminal `clear`, all lines below the cursor are
+                // invalidated, too for some reason (there _is_ a `SequenceNo` for every line, may
+                // be there is a way to find out if the lines actually have changed).
+
+                screen.with_phys_lines(phys_range, |lines| {
+                    // This is guaranteed to be called only once for all lines.
+                    self.line_buf.extend(lines.iter().copied().cloned());
+                    // r = panel.update_lines(scene, visible_range_start as usize, lines);
+                });
+            }
         }
 
         let cursor_pos = terminal.cursor_pos();

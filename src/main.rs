@@ -237,7 +237,7 @@ impl MassiveTerminal {
             )?;
 
             {
-                // Update lines
+                // Update lines & cursor
 
                 self.terminal_state.update(
                     &self.terminal,
