@@ -59,7 +59,6 @@ impl ScrollMatrices {
         assert!(index >= 0);
         while index < self.coverage_stable_range().start {
             assert!(self.top_index > 0);
-            self.top_index -= 1;
             let matrix_top_line_index =
                 self.coverage_stable_range().start - LINES_PER_MATRIX as isize - self.scroll_offset;
 
@@ -75,6 +74,7 @@ impl ScrollMatrices {
             let scroll_location = ScrollLocation::new(matrix_delta_y, matrix, location);
 
             self.scroll_locations.push_front(scroll_location);
+            self.top_index -= 1;
         }
 
         while index >= self.coverage_stable_range().end {
@@ -130,6 +130,7 @@ impl ScrollMatrices {
         let end = self.scroll_locations.len();
         self.scroll_locations.drain(end - trim_bottom..end);
         self.scroll_locations.drain(0..trim_top);
+        self.top_index += trim_top;
     }
 
     /// The range of rows the current set of locations cover.
