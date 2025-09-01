@@ -24,6 +24,7 @@ mod input;
 mod panel;
 mod terminal_font;
 mod terminal_state;
+mod scroll_matrices;
 
 pub use panel::*;
 pub use terminal_font::*;
