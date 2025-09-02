@@ -8,31 +8,38 @@ use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
 use massive_geometry::{Camera, Color, Identity};
 use massive_scene::{Handle, Location, Matrix, Scene};
-use portable_pty::{CommandBuilder, PtyPair, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use tokio::{pin, select, sync::Notify, task};
 use tracing::info;
 
 use massive_shell::{ApplicationContext, AsyncWindowRenderer, RendererMessage, ShellWindow, shell};
 use terminal_state::TerminalState;
-use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize, color};
+use wezterm_term::{Terminal, TerminalConfiguration, color};
 use winit::{
-    dpi::PhysicalSize,
-    event::{ElementState, Modifiers, WindowEvent},
+    dpi::{LogicalSize, PhysicalSize},
+    event::{ElementState, WindowEvent},
 };
 
+mod geometry;
 mod input;
 mod panel;
 mod terminal_font;
 mod terminal_state;
+mod window_state;
 
 pub use panel::*;
 pub use terminal_font::*;
+
+use crate::{
+    geometry::{TerminalGeometry, WindowGeometry},
+    window_state::WindowState,
+};
 
 const TERMINAL_NAME: &str = "MassiveTerminal";
 /// Production: Extract from the build.
 const TERMINAL_VERSION: &str = "1.0";
 const DEFAULT_FONT_SIZE: f32 = 13.;
-const DEFAULT_TERMINAL_SIZE: (usize, usize) = (80 * 2, 24 * 2);
+const DEFAULT_TERMINAL_SIZE: (u32, u32) = (80 * 2, 24 * 2);
 const APPLICATION_NAME: &str = "Massive Terminal";
 
 const JETBRAINS_MONO: &[u8] =
@@ -63,12 +70,6 @@ struct MassiveTerminal {
     terminal_state: TerminalState,
 }
 
-#[derive(Default, Debug)]
-struct WindowState {
-    focused: bool,
-    keyboard_modifiers: Modifiers,
-}
-
 impl MassiveTerminal {
     async fn new(context: ApplicationContext) -> Result<Self> {
         let ids;
@@ -86,27 +87,24 @@ impl MassiveTerminal {
 
         let font = font_system.get_font(ids[0]).unwrap();
 
-        let font_size =
-            DEFAULT_FONT_SIZE * context.primary_monitor_scale_factor().unwrap_or_default() as f32;
+        let scale_factor = context.primary_monitor_scale_factor().unwrap_or(1.0);
+        let font_size = DEFAULT_FONT_SIZE * scale_factor as f32;
 
         let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
 
-        let cell_pixel_size = terminal_font.cell_size_px();
-
-        // Research: Why trunc() and not ceil() or round()?
         let terminal_size = DEFAULT_TERMINAL_SIZE;
 
-        let inner_window_size = (
-            cell_pixel_size.0 * terminal_size.0,
-            cell_pixel_size.1 * terminal_size.1,
+        let padding_px = terminal_font.cell_size_px().0 / 2;
+
+        let window_geometry = WindowGeometry::new(
+            scale_factor,
+            padding_px,
+            TerminalGeometry::new(terminal_font.cell_size_px(), terminal_size),
         );
 
-        let window = context
-            .new_window(
-                PhysicalSize::new(inner_window_size.0 as u32, inner_window_size.1 as _),
-                None,
-            )
-            .await?;
+        let inner_window_size: PhysicalSize<u32> = window_geometry.inner_size_px().into();
+
+        let window = context.new_window(inner_window_size, None).await?;
         window.set_title(APPLICATION_NAME);
 
         let font_system = Arc::new(Mutex::new(font_system));
@@ -120,11 +118,7 @@ impl MassiveTerminal {
 
         // Ergonomics: Why does the renderer need a camera here this early?
         let renderer = window
-            .new_renderer(
-                font_system.clone(),
-                camera,
-                (inner_window_size.0 as u32, inner_window_size.1 as _),
-            )
+            .new_renderer(font_system.clone(), camera, inner_window_size)
             .await?;
 
         // Ergonomics: Feels weird sending a message to set the background color.
@@ -133,16 +127,8 @@ impl MassiveTerminal {
         // Use the native pty implementation for the system
         let pty_system = native_pty_system();
 
-        let (columns, rows) = terminal_size;
-
         // Create a new pty
-        let pty_pair = pty_system.openpty(PtySize {
-            rows: rows as _,
-            cols: columns as _,
-            // Robustness: is this physical or logical size, and what does a terminal actually do with it?
-            pixel_width: cell_pixel_size.0 as _,
-            pixel_height: cell_pixel_size.1 as _,
-        })?;
+        let pty_pair = pty_system.openpty(window_geometry.terminal.pty_size())?;
 
         let cmd = CommandBuilder::new_default_prog();
 
@@ -157,14 +143,7 @@ impl MassiveTerminal {
         let configuration = MassiveTerminalConfiguration {};
 
         let terminal = Terminal::new(
-            // Production: Set dpi
-            TerminalSize {
-                rows,
-                cols: columns,
-                pixel_width: cell_pixel_size.0,
-                pixel_height: cell_pixel_size.1,
-                ..TerminalSize::default()
-            },
+            window_geometry.terminal.wezterm_terminal_size(),
             Arc::new(configuration),
             TERMINAL_NAME,
             TERMINAL_VERSION,
@@ -181,7 +160,13 @@ impl MassiveTerminal {
             matrix: panel_matrix.clone(),
         });
 
-        let panel = Panel::new(font_system, terminal_font, rows, panel_location, &scene);
+        let panel = Panel::new(
+            font_system,
+            terminal_font,
+            window_geometry.terminal.rows(),
+            panel_location,
+            &scene,
+        );
 
         Ok(Self {
             context,
@@ -192,7 +177,7 @@ impl MassiveTerminal {
             scene,
             panel,
             panel_matrix,
-            window_state: WindowState::default(),
+            window_state: WindowState::new(window_geometry),
             terminal_state: TerminalState::new(last_rendered_seq_no),
         })
     }
@@ -250,12 +235,12 @@ impl MassiveTerminal {
             // Center
 
             {
-                let page_size = self.window.inner_size();
+                let inner_size = self.window.inner_size();
                 let center_transform = {
                     Matrix::from_translation(
                         (
-                            -((page_size.width / 2) as f64),
-                            -((page_size.height / 2) as f64),
+                            -((inner_size.width / 2) as f64),
+                            -((inner_size.height / 2) as f64),
                             0.0,
                         )
                             .into(),
@@ -272,7 +257,10 @@ impl MassiveTerminal {
     fn process_window_event(&mut self, event: &WindowEvent) -> Result<()> {
         match event {
             WindowEvent::ActivationTokenDone { .. } => {}
-            WindowEvent::Resized { .. } => {}
+            WindowEvent::Resized(physical_size) => {
+                let scale_factor = self.window_state.scale_factor;
+                let inner_size: LogicalSize<u32> = physical_size.to_logical(scale_factor);
+            }
             WindowEvent::Moved { .. } => {}
             WindowEvent::CloseRequested => {}
             WindowEvent::Destroyed => {}

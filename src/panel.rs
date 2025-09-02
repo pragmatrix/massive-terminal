@@ -62,7 +62,7 @@ impl Panel {
     pub fn new(
         font_system: Arc<Mutex<FontSystem>>,
         font: TerminalFont,
-        rows: usize,
+        rows: u32,
         location: Handle<Location>,
         scene: &Scene,
     ) -> Self {
@@ -245,8 +245,8 @@ fn cluster_to_run(
     for glyph in &line.glyphs {
         // Compute the discrete x offset and pixel position.
         // Robustness: Report unexpected variance here (> 0.001 ?)
-        let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as usize;
-        let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as usize;
+        let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as u32;
+        let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as u32;
         let glyph_x = glyph_index * font.glyph_advance_px;
 
         // Optimization: Compute this only once.
@@ -286,9 +286,9 @@ fn cluster_to_run(
         metrics: GlyphRunMetrics {
             // Precision: compute this once for the font size so that it also matches the pixel cell
             // size.
-            max_ascent: font.ascender_px as u32,
-            max_descent: font.descender_px as u32,
-            width: (cell_width * font.glyph_advance_px) as u32,
+            max_ascent: font.ascender_px,
+            max_descent: font.descender_px,
+            width: (cell_width * font.glyph_advance_px),
         },
         text_color: color::from_srgba(fg_color),
         text_weight: weight,
@@ -313,7 +313,8 @@ fn cluster_background(
     let background = color::from_srgba(color_palette.resolve_bg(background));
 
     let size: Size = (
-        (cluster.width * font.cell_size_px().0) as f64,
+        // Precision: We keep multiplication in the u32 range here. Unlikely it's breaking out.
+        (cluster.width as u32 * font.cell_size_px().0) as f64,
         font.cell_size_px().1 as f64,
     )
         .into();
@@ -370,9 +371,10 @@ impl Panel {
     fn cursor_shape(&self, shape: BasicCursorShape, pos: CursorPosition) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font.cell_size_px();
-        let left = cell_size.0 * pos.x;
+        let left = cell_size.0 * pos.x as u32;
         // pos is screen relative, but we do attach the cursor visual to the scroll matrix, so have
         // to add scroll offset here.
+        // Precision: This may get very large, so u64.
         let top = cell_size.1 as u64 * (pos.y as u64 + self.scroll_offset as u64);
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
