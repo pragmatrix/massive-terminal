@@ -160,12 +160,15 @@ impl Panel {
         visual_line_index_top: usize,
         lines: &[Line],
     ) -> Result<()> {
-        let mut font_system = self.font_system.lock().unwrap();
-
         for (i, line) in lines.iter().enumerate() {
             let line_index = visual_line_index_top + i;
             let top = (self.scroll_offset + line_index as i64) * self.font.cell_size_px().1 as i64;
-            let shapes = self.line_to_shapes(&mut font_system, top, line)?;
+            let shapes = {
+                // Lock the font_system for the least amount of time possible. This is shared with
+                // the renderer.
+                let mut font_system = self.font_system.lock().unwrap();
+                self.line_to_shapes(&mut font_system, top, line)?
+            };
             self.visible_lines[line_index].update_with(|v| {
                 v.shapes = shapes.into();
             });
