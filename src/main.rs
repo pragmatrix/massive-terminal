@@ -309,8 +309,14 @@ impl MassiveTerminal {
     }
 
     fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {
+        let current_size = self.window_state.geometry.terminal.terminal_cell_size;
+
         // First the geometry.
         self.window_state.geometry.resize(new_window_size_px);
+
+        if self.window_state.geometry.terminal.terminal_cell_size == current_size {
+            return Ok(());
+        }
 
         // Then we go bottom up.
         let terminal = &self.window_state.terminal;
