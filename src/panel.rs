@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::VecDeque,
     ops::Range,
     sync::{Arc, Mutex},
@@ -62,7 +63,7 @@ impl Panel {
     pub fn new(
         font_system: Arc<Mutex<FontSystem>>,
         font: TerminalFont,
-        rows: u32,
+        rows: usize,
         location: Handle<Location>,
         scene: &Scene,
     ) -> Self {
@@ -123,6 +124,26 @@ impl Panel {
         }
         let topmost_to_reset = self.rows().saturating_sub(lines);
         self.reset_lines(topmost_to_reset..self.rows());
+    }
+
+    pub fn resize(&mut self, rows: usize, scene: &Scene) {
+        match rows.cmp(&self.rows()) {
+            Ordering::Less => {
+                self.visible_lines.drain(rows..);
+            }
+            Ordering::Equal => {}
+            Ordering::Greater => {
+                let added = rows - self.rows();
+                (0..added).for_each(|_| {
+                    self.visible_lines.push_back(scene.stage(Visual {
+                        location: self.scroll_location.clone(),
+                        shapes: [].into(),
+                    }));
+                });
+            }
+        }
+
+        assert_eq!(self.visible_lines.len(), rows)
     }
 
     fn reset_lines(&mut self, range: Range<usize>) {

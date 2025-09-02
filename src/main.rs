@@ -16,7 +16,7 @@ use massive_shell::{ApplicationContext, AsyncWindowRenderer, RendererMessage, Sh
 use terminal_state::TerminalState;
 use wezterm_term::{Terminal, TerminalConfiguration, color};
 use winit::{
-    dpi::{LogicalSize, PhysicalSize},
+    dpi::PhysicalSize,
     event::{ElementState, WindowEvent},
 };
 
@@ -39,7 +39,7 @@ const TERMINAL_NAME: &str = "MassiveTerminal";
 /// Production: Extract from the build.
 const TERMINAL_VERSION: &str = "1.0";
 const DEFAULT_FONT_SIZE: f32 = 13.;
-const DEFAULT_TERMINAL_SIZE: (u32, u32) = (80 * 2, 24 * 2);
+const DEFAULT_TERMINAL_SIZE: (usize, usize) = (80 * 2, 24 * 2);
 const APPLICATION_NAME: &str = "Massive Terminal";
 
 const JETBRAINS_MONO: &[u8] =
@@ -258,8 +258,7 @@ impl MassiveTerminal {
         match event {
             WindowEvent::ActivationTokenDone { .. } => {}
             WindowEvent::Resized(physical_size) => {
-                let scale_factor = self.window_state.scale_factor;
-                let inner_size: LogicalSize<u32> = physical_size.to_logical(scale_factor);
+                self.resize((*physical_size).into())?;
             }
             WindowEvent::Moved { .. } => {}
             WindowEvent::CloseRequested => {}
@@ -306,6 +305,28 @@ impl MassiveTerminal {
             WindowEvent::Occluded(_) => {}
             WindowEvent::RedrawRequested => {}
         }
+        Ok(())
+    }
+
+    fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {
+        // First the geometry.
+        self.window_state.geometry.resize(new_window_size_px);
+
+        // Then we go bottom up.
+        let terminal = &self.window_state.terminal;
+
+        self.pty_pair.master.resize(terminal.pty_size())?;
+
+        self.terminal
+            .lock()
+            .unwrap()
+            .resize(terminal.wezterm_terminal_size());
+
+        self.panel.resize(terminal.rows(), &self.scene);
+
+        self.renderer
+            .post_msg(RendererMessage::Resize(self.window_state.inner_size_px()))?;
+
         Ok(())
     }
 }
