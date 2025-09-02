@@ -324,9 +324,6 @@ impl MassiveTerminal {
 
         self.panel.resize(terminal.rows(), &self.scene);
 
-        self.renderer
-            .post_msg(RendererMessage::Resize(self.window_state.inner_size_px()))?;
-
         Ok(())
     }
 }
