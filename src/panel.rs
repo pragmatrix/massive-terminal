@@ -14,13 +14,13 @@ use termwiz::{
     color::ColorAttribute,
     surface::{CursorShape, CursorVisibility},
 };
-use wezterm_term::{CursorPosition, Intensity, Line, color::ColorPalette};
+use wezterm_term::{CursorPosition, Intensity, Line, StableRowIndex, color::ColorPalette};
 
 use massive_geometry::{Identity, Point, Rect, Size};
 use massive_scene::{Handle, Location, Matrix, Scene, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 
-use crate::TerminalFont;
+use crate::{TerminalFont, scroll_matrices::ScrollMatrices};
 
 /// Panel is the representation of the terminal.
 ///
@@ -38,8 +38,8 @@ pub struct Panel {
     /// The matrix all visuals are transformed with.
     ///
     /// This effectively moves all lines _only_ up.
-    scroll_matrix: Handle<Matrix>,
-    scroll_location: Handle<Location>,
+    scroll_matrices: ScrollMatrices,
+
     /// The number of lines with which _all_ lines are transformed upwards. If the view scrolls up and a new line
     /// comes in on the bottom, this increases.
     scroll_offset: i64,
@@ -66,17 +66,22 @@ impl Panel {
         location: Handle<Location>,
         scene: &Scene,
     ) -> Self {
-        let scroll_matrix = scene.stage(Matrix::identity());
+        // let scroll_matrix = scene.stage(Matrix::identity());
 
-        let scroll_location = scene.stage(Location {
-            parent: Some(location),
-            matrix: scroll_matrix.clone(),
-        });
+        // let scroll_location = scene.stage(Location {
+        //     parent: Some(location),
+        //     matrix: scroll_matrix.clone(),
+        // });
+
+        let line_height = font.cell_size_px().1;
+        let mut scroll_matrices = ScrollMatrices::new(location, line_height as u64);
 
         let line_visuals = (0..rows)
-            .map(|_| {
+            .map(|i| {
+                let (location, _offset) =
+                    scroll_matrices.location_for_line(i as StableRowIndex, scene);
                 scene.stage(Visual {
-                    location: scroll_location.clone(),
+                    location,
                     shapes: [].into(),
                 })
             })
@@ -87,8 +92,7 @@ impl Panel {
             font,
             color_palette: ColorPalette::default(),
             scroll_offset: 0,
-            scroll_matrix,
-            scroll_location,
+            scroll_matrices,
             visible_lines: line_visuals,
             cursor: None,
         }
@@ -113,8 +117,11 @@ impl Panel {
 
         self.scroll_offset += delta as i64;
         let new_y = -self.scroll_offset * self.font.cell_size_px().1 as i64;
-        self.scroll_matrix
-            .update(Matrix::from_translation((0., new_y as f64, 0.).into()));
+        // self.scroll_matrix
+        //     .update(Matrix::from_translation((0., new_y as f64, 0.).into()));
+        // Robustness: self.scroll_offset should probably be a StableRowIndex.
+        self.scroll_matrices
+            .scroll_to(self.scroll_offset as StableRowIndex);
     }
 
     fn scroll_up(&mut self, lines: usize) {
@@ -135,7 +142,7 @@ impl Panel {
     pub fn update_lines(
         &mut self,
         // Not used, we don't stage new objects here (yet!).
-        _scene: &Scene,
+        scene: &Scene,
         visual_line_index_top: usize,
         lines: &[Line],
     ) -> Result<()> {
@@ -143,9 +150,11 @@ impl Panel {
 
         for (i, line) in lines.iter().enumerate() {
             let line_index = visual_line_index_top + i;
-            let top = (self.scroll_offset + line_index as i64) * self.font.cell_size_px().1 as i64;
-            let shapes = self.line_to_shapes(&mut font_system, top, line)?;
+            let stable_index = self.scroll_offset as isize + line_index as isize;
+            let (location, top) = self.scroll_matrices.location_for_line(stable_index, scene);
+            let shapes = self.line_to_shapes(&mut font_system, top as _, line)?;
             self.visible_lines[line_index].update_with(|v| {
+                v.location = location;
                 v.shapes = shapes.into();
             });
         }
@@ -344,8 +353,11 @@ impl Panel {
             }
             CursorVisibility::Visible => {
                 let basic_shape = Self::basic_cursor_shape(pos.shape, focused);
-                let shape = self.cursor_shape(basic_shape, pos);
-                let visual = Visual::new(self.scroll_location.clone(), [shape]);
+                let (location, top) = self
+                    .scroll_matrices
+                    .location_for_line(self.scroll_offset as StableRowIndex, scene);
+                let shape = self.cursor_shape(basic_shape, pos, top);
+                let visual = Visual::new(location, [shape]);
                 self.cursor = Some(scene.stage(visual));
             }
         }
@@ -367,13 +379,18 @@ impl Panel {
         }
     }
 
-    fn cursor_shape(&self, shape: BasicCursorShape, pos: CursorPosition) -> Shape {
+    fn cursor_shape(
+        &self,
+        shape: BasicCursorShape,
+        pos: CursorPosition,
+        top_of_screen_relative_to_matrix: u64,
+    ) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font.cell_size_px();
         let left = cell_size.0 * pos.x;
         // pos is screen relative, but we do attach the cursor visual to the scroll matrix, so have
         // to add scroll offset here.
-        let top = cell_size.1 as u64 * (pos.y as u64 + self.scroll_offset as u64);
+        let top = cell_size.1 as u64 * (pos.y as u64 + top_of_screen_relative_to_matrix);
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
         // position / thickness, not from the cell size.

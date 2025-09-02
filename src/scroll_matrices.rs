@@ -21,7 +21,7 @@ use wezterm_term::StableRowIndex;
 const LINES_PER_MATRIX: usize = 0x10;
 
 #[derive(Debug)]
-struct ScrollMatrices {
+pub struct ScrollMatrices {
     parent_location: Handle<Location>,
 
     /// Height of one single line (also cell height).
@@ -65,7 +65,7 @@ impl ScrollMatrices {
             let matrix_delta_y = matrix_top_line_index as i64 * self.line_height_px as i64;
 
             let matrix = scene.stage(Matrix::from_translation(
-                (0., -matrix_delta_y as f64, 0.).into(),
+                (0., matrix_delta_y as f64, 0.).into(),
             ));
             let location = scene.stage(Location::new(
                 Some(self.parent_location.clone()),
@@ -82,7 +82,7 @@ impl ScrollMatrices {
 
             let matrix_delta_y = matrix_top_line_index as i64 * self.line_height_px as i64;
             let matrix = scene.stage(Matrix::from_translation(
-                (0., -matrix_delta_y as f64, 0.).into(),
+                (0., matrix_delta_y as f64, 0.).into(),
             ));
             let location = scene.stage(Location::new(
                 Some(self.parent_location.clone()),
@@ -97,9 +97,11 @@ impl ScrollMatrices {
 
         let coverage_index = (index - self.coverage_stable_range().start) as usize;
         let location_index = coverage_index / LINES_PER_MATRIX;
-        let line_top = coverage_index % LINES_PER_MATRIX;
-        let location = self.scroll_locations[location_index].location.clone();
-        (location, line_top as u64 * self.line_height_px)
+        let mut line_top = (coverage_index % LINES_PER_MATRIX) as u64;
+        let location = &self.scroll_locations[location_index];
+        line_top += location.scrolled as u64;
+        let location = location.location.clone();
+        (location, line_top * self.line_height_px)
     }
 
     /// Scroll the top position of the view to the new StableRowIndex.
@@ -108,7 +110,7 @@ impl ScrollMatrices {
         let delta_y = scroll_delta as i64 * self.line_height_px as i64;
         self.scroll_locations
             .iter_mut()
-            .for_each(|l| l.scroll(delta_y));
+            .for_each(|l| l.scroll(scroll_delta, delta_y));
         self.scroll_offset = new_scroll_offset;
     }
 
@@ -117,7 +119,16 @@ impl ScrollMatrices {
     //
     // This will purge all locations hat fall outside of this range.
     pub fn limit_coverage(&mut self, range: Range<StableRowIndex>) {
+        assert!(range.start >= 0 && range.end >= range.start);
+
         let current = self.coverage_stable_range();
+        // Disjoint range: requested range lies completely outside current coverage.
+        if range.end <= current.start || range.start >= current.end {
+            self.top_index = (range.start as usize) / LINES_PER_MATRIX;
+            self.scroll_locations.clear();
+            return;
+        }
+
         let mut trim_top = 0;
         let mut trim_bottom = 0;
         if current.start < range.start {
@@ -149,6 +160,7 @@ struct ScrollLocation {
     /// The actual y integer translation of the matrix. This is to preserve the numerical accuracy
     /// in relation to the f64 translation when we scroll the matrix.
     y_translation: i64,
+    scrolled: i64,
     matrix: Handle<Matrix>,
     location: Handle<Location>,
 }
@@ -157,16 +169,55 @@ impl ScrollLocation {
     // Architecture: Location already contains the matrix, can't we access it from there when scrolling?
     fn new(y_translation: i64, matrix: Handle<Matrix>, location: Handle<Location>) -> Self {
         Self {
+            scrolled: 0,
             y_translation,
             matrix,
             location,
         }
     }
 
-    fn scroll(&mut self, delta_y: i64) {
+    fn scroll(&mut self, lines: isize, delta_y: i64) {
+        self.scrolled += lines as i64;
         self.y_translation += delta_y;
         self.matrix.update(Matrix::from_translation(
-            (0., -self.y_translation as f64, 0.).into(),
+            (0., self.y_translation as f64, 0.).into(),
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use massive_scene::{Location, Matrix, Scene};
+
+    // This test documents current panic behavior when a completely disjoint range is passed to
+    // limit_coverage. A disjoint range causes trim_top to exceed the number of existing matrices
+    // and thus panic in the drain call. If disjoint ranges should be supported, limit_coverage
+    // must be adjusted. For now we lock this in with a should_panic test.
+    #[test]
+    fn disjoint_range_clears() {
+        let scene = Scene::new();
+        let parent_matrix = scene.stage(Matrix::from_translation((0., 0., 0.).into()));
+        let parent_location = scene.stage(Location::from(parent_matrix));
+        let mut mats = ScrollMatrices::new(parent_location, 10);
+
+        // Populate 4 matrices (indices 0..64)
+        for i in [0, 15, 16, 31, 32, 47, 48, 63] {
+            // span across multiple blocks
+            let _ = mats.location_for_line(i as isize, &scene);
+        }
+
+        let current = mats.coverage_stable_range();
+        assert_eq!(current.start, 0);
+        assert_eq!(current.end, 64);
+
+        // Choose a disjoint range that starts far beyond current.end so that
+        // trim_top = (range.start - current.start)/LINES_PER_MATRIX > number_of_matrices (4),
+        // triggering the panic.
+        let far_start = 1024; // well beyond 64
+        mats.limit_coverage(far_start..(far_start + 1));
+        assert_eq!(mats.scroll_locations.len(), 0);
+        assert_eq!(mats.top_index, far_start as usize / LINES_PER_MATRIX);
+        assert_eq!(mats.coverage_stable_range().start, far_start);
     }
 }
