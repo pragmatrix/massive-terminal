@@ -5,7 +5,7 @@ pub struct WindowGeometry {
     _scale_factor: f64,
     inner_size_px: (u32, u32),
 
-    /// Padding around the terminal in physcial pixels.
+    /// Padding around the terminal in physical pixels.
     padding_px: u32,
 
     pub terminal: TerminalGeometry,
@@ -42,7 +42,7 @@ impl WindowGeometry {
 
 #[derive(Debug)]
 pub struct TerminalGeometry {
-    /// Cell size in physcial pixels.
+    /// Cell size in physical pixels.
     pub cell_size_px: (u32, u32),
 
     /// Terminal size in cells.
