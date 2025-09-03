@@ -103,13 +103,15 @@ impl Panel {
     /// This makes sure that empty lines are generated.
     pub fn scroll(&mut self, delta: isize) {
         match delta {
-            0 => {
+            _ if delta < 0 => {
+                self.move_lines_down(-delta as usize);
+            }
+            _ if delta > 0 => {
+                self.move_lines_up(delta as usize);
+            }
+            _ => {
                 return;
             }
-            _ if delta < 0 => {
-                todo!("Scrolling down is unsupported")
-            }
-            _ => self.scroll_up(delta as usize),
         }
 
         self.scroll_offset += delta as i64;
@@ -118,12 +120,21 @@ impl Panel {
             .update(Matrix::from_translation((0., new_y as f64, 0.).into()));
     }
 
-    fn scroll_up(&mut self, lines: usize) {
+    fn move_lines_up(&mut self, lines: usize) {
         if lines < self.rows() {
             self.visible_lines.rotate_left(lines);
         }
-        let topmost_to_reset = self.rows().saturating_sub(lines);
-        self.reset_lines(topmost_to_reset..self.rows());
+        let first_to_reset = self.rows().saturating_sub(lines);
+        self.reset_lines(first_to_reset..self.rows());
+    }
+
+    fn move_lines_down(&mut self, lines: usize) {
+        if lines < self.rows() {
+            self.visible_lines.rotate_right(lines);
+        }
+
+        let lines_to_reset = lines.min(self.rows());
+        self.reset_lines(0..lines_to_reset);
     }
 
     pub fn resize(&mut self, rows: usize, scene: &Scene) {
