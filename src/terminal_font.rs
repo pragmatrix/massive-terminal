@@ -10,10 +10,10 @@ pub struct TerminalFont {
     pub family_name: String,
     pub size: f32,
 
-    pub units_per_em: usize,
-    pub ascender_em: usize,
-    pub descender_em: usize,
-    pub glyph_advance_em: usize,
+    pub units_per_em: u32,
+    pub ascender_em: u32,
+    pub descender_em: u32,
+    pub glyph_advance_em: u32,
 
     /// Normalized glyph size.
     ///
@@ -21,11 +21,11 @@ pub struct TerminalFont {
     pub glyph_size: (f32, f32),
 
     /// Ascender in pixel, never larger than cell pixel height.
-    pub ascender_px: usize,
+    pub ascender_px: u32,
     /// Descender in pixel.
-    pub descender_px: usize,
+    pub descender_px: u32,
 
-    pub glyph_advance_px: usize,
+    pub glyph_advance_px: u32,
 }
 
 impl TerminalFont {
@@ -48,11 +48,11 @@ impl TerminalFont {
             bail!("Monospace fonts with a line gap aren't supported (yet)")
         }
 
-        let ascender_em: usize = hb_font
+        let ascender_em: u32 = hb_font
             .ascender()
             .try_into()
             .context("Unexpected font ascender")?;
-        let descender_em: usize = (-hb_font.descender())
+        let descender_em: u32 = (-hb_font.descender())
             .try_into()
             .context("Unexpected font descender")?;
 
@@ -64,7 +64,7 @@ impl TerminalFont {
                 let advance: u16 = hb_font
                     .glyph_hor_advance(glyph_index)
                     .ok_or(anyhow!("Getting the advance of the letter `M` failed"))?;
-                advance as usize
+                advance as u32
             };
             // Naming: This is font_height, not glyph height.
             let glyph_height: usize = hb_font.height().try_into().context("Font height")?;
@@ -83,10 +83,10 @@ impl TerminalFont {
         };
 
         // Research: Why trunc() and not round()?
-        let cell_pixel_size = (glyph_size.0.trunc() as usize, glyph_size.1.trunc() as usize);
+        let cell_pixel_size = (glyph_size.0.trunc() as u32, glyph_size.1.trunc() as u32);
 
         let ascender_px =
-            ((ascender_em as f32 * font_size_f).trunc() as usize).min(cell_pixel_size.1);
+            ((ascender_em as f32 * font_size_f).trunc() as u32).min(cell_pixel_size.1);
 
         let descender_px = cell_pixel_size.1 - ascender_px;
 
@@ -105,11 +105,11 @@ impl TerminalFont {
         })
     }
 
-    pub fn cell_size_px(&self) -> (usize, usize) {
+    pub fn cell_size_px(&self) -> (u32, u32) {
         (self.glyph_advance_px, self.font_height_px())
     }
 
-    pub fn font_height_px(&self) -> usize {
+    pub fn font_height_px(&self) -> u32 {
         self.ascender_px + self.descender_px
     }
 }

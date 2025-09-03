@@ -18,8 +18,8 @@ massive-shell.workspace = true
 massive-geometry.workspace = true
 
 anyhow.workspace = true
-derive_more.workspace = true
 cosmic-text.workspace = true
+derive_more.workspace = true
 futures.workspace = true
 portable-pty.workspace = true
 rangeset.workspace = true

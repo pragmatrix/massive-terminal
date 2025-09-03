@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::VecDeque,
     ops::Range,
     sync::{Arc, Mutex},
@@ -102,13 +103,15 @@ impl Panel {
     /// This makes sure that empty lines are generated.
     pub fn scroll(&mut self, delta: isize) {
         match delta {
-            0 => {
+            _ if delta < 0 => {
+                self.move_lines_down(-delta as usize);
+            }
+            _ if delta > 0 => {
+                self.move_lines_up(delta as usize);
+            }
+            _ => {
                 return;
             }
-            _ if delta < 0 => {
-                todo!("Scrolling down is unsupported")
-            }
-            _ => self.scroll_up(delta as usize),
         }
 
         self.scroll_offset += delta as i64;
@@ -117,12 +120,41 @@ impl Panel {
             .update(Matrix::from_translation((0., new_y as f64, 0.).into()));
     }
 
-    fn scroll_up(&mut self, lines: usize) {
+    fn move_lines_up(&mut self, lines: usize) {
         if lines < self.rows() {
             self.visible_lines.rotate_left(lines);
         }
-        let topmost_to_reset = self.rows().saturating_sub(lines);
-        self.reset_lines(topmost_to_reset..self.rows());
+        let first_to_reset = self.rows().saturating_sub(lines);
+        self.reset_lines(first_to_reset..self.rows());
+    }
+
+    fn move_lines_down(&mut self, lines: usize) {
+        if lines < self.rows() {
+            self.visible_lines.rotate_right(lines);
+        }
+
+        let lines_to_reset = lines.min(self.rows());
+        self.reset_lines(0..lines_to_reset);
+    }
+
+    pub fn resize(&mut self, rows: usize, scene: &Scene) {
+        match rows.cmp(&self.rows()) {
+            Ordering::Less => {
+                self.visible_lines.drain(rows..);
+            }
+            Ordering::Equal => {}
+            Ordering::Greater => {
+                let added = rows - self.rows();
+                (0..added).for_each(|_| {
+                    self.visible_lines.push_back(scene.stage(Visual {
+                        location: self.scroll_location.clone(),
+                        shapes: [].into(),
+                    }));
+                });
+            }
+        }
+
+        assert_eq!(self.visible_lines.len(), rows)
     }
 
     fn reset_lines(&mut self, range: Range<usize>) {
@@ -139,12 +171,15 @@ impl Panel {
         visual_line_index_top: usize,
         lines: &[Line],
     ) -> Result<()> {
-        let mut font_system = self.font_system.lock().unwrap();
-
         for (i, line) in lines.iter().enumerate() {
             let line_index = visual_line_index_top + i;
             let top = (self.scroll_offset + line_index as i64) * self.font.cell_size_px().1 as i64;
-            let shapes = self.line_to_shapes(&mut font_system, top, line)?;
+            let shapes = {
+                // Lock the font_system for the least amount of time possible. This is shared with
+                // the renderer.
+                let mut font_system = self.font_system.lock().unwrap();
+                self.line_to_shapes(&mut font_system, top, line)?
+            };
             self.visible_lines[line_index].update_with(|v| {
                 v.shapes = shapes.into();
             });
@@ -245,8 +280,8 @@ fn cluster_to_run(
     for glyph in &line.glyphs {
         // Compute the discrete x offset and pixel position.
         // Robustness: Report unexpected variance here (> 0.001 ?)
-        let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as usize;
-        let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as usize;
+        let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as u32;
+        let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as u32;
         let glyph_x = glyph_index * font.glyph_advance_px;
 
         // Optimization: Compute this only once.
@@ -286,9 +321,9 @@ fn cluster_to_run(
         metrics: GlyphRunMetrics {
             // Precision: compute this once for the font size so that it also matches the pixel cell
             // size.
-            max_ascent: font.ascender_px as u32,
-            max_descent: font.descender_px as u32,
-            width: (cell_width * font.glyph_advance_px) as u32,
+            max_ascent: font.ascender_px,
+            max_descent: font.descender_px,
+            width: (cell_width * font.glyph_advance_px),
         },
         text_color: color::from_srgba(fg_color),
         text_weight: weight,
@@ -313,7 +348,8 @@ fn cluster_background(
     let background = color::from_srgba(color_palette.resolve_bg(background));
 
     let size: Size = (
-        (cluster.width * font.cell_size_px().0) as f64,
+        // Precision: We keep multiplication in the u32 range here. Unlikely it's breaking out.
+        (cluster.width as u32 * font.cell_size_px().0) as f64,
         font.cell_size_px().1 as f64,
     )
         .into();
@@ -370,9 +406,10 @@ impl Panel {
     fn cursor_shape(&self, shape: BasicCursorShape, pos: CursorPosition) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font.cell_size_px();
-        let left = cell_size.0 * pos.x;
+        let left = cell_size.0 * pos.x as u32;
         // pos is screen relative, but we do attach the cursor visual to the scroll matrix, so have
         // to add scroll offset here.
+        // Precision: This may get very large, so u64.
         let top = cell_size.1 as u64 * (pos.y as u64 + self.scroll_offset as u64);
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
