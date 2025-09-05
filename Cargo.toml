@@ -18,6 +18,7 @@ massive-shell.workspace = true
 massive-geometry.workspace = true
 
 anyhow.workspace = true
+cgmath.workspace = true
 cosmic-text.workspace = true
 derive_more.workspace = true
 futures.workspace = true

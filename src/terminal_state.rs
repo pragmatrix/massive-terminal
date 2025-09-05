@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
-use crate::{Panel, WindowState};
+use crate::{Panel, WindowState, selection::Selection};
 use massive_scene::Scene;
 use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
@@ -16,6 +16,7 @@ pub struct TerminalState {
     // For scroll detection. Primary screen only.
     pub current_stable_top_primary: StableRowIndex,
     line_buf: Vec<Line>,
+    pub selection: Selection,
 }
 
 impl TerminalState {
@@ -24,6 +25,7 @@ impl TerminalState {
             last_rendered_seq_no,
             current_stable_top_primary: 0,
             line_buf: Vec::new(),
+            selection: Default::default(),
         }
     }
 

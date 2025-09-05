@@ -12,17 +12,18 @@ use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use tokio::{pin, select, sync::Notify, task};
 use tracing::info;
 
-use massive_shell::{ApplicationContext, AsyncWindowRenderer, RendererMessage, ShellWindow, shell};
+use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
 use terminal_state::TerminalState;
 use wezterm_term::{Terminal, TerminalConfiguration, color};
 use winit::{
     dpi::PhysicalSize,
-    event::{ElementState, WindowEvent},
+    event::{ElementState, MouseButton, WindowEvent},
 };
 
 mod geometry;
 mod input;
 mod panel;
+mod selection;
 mod terminal_font;
 mod terminal_state;
 mod window_state;
@@ -109,7 +110,7 @@ impl MassiveTerminal {
 
         let font_system = Arc::new(Mutex::new(font_system));
 
-        // Ergonomics: Camera::default() should create this one.
+        // Ergonomics: Camera::default() should probably create this one.
         let camera = {
             let fovy: f64 = 45.0;
             let camera_distance = 1.0 / (fovy / 2.0).to_radians().tan();
@@ -121,8 +122,7 @@ impl MassiveTerminal {
             .new_renderer(font_system.clone(), camera, inner_window_size)
             .await?;
 
-        // Ergonomics: Feels weird sending a message to set the background color.
-        renderer.post_msg(RendererMessage::SetBackgroundColor(Some(Color::BLACK)))?;
+        renderer.set_background_color(Some(Color::BLACK))?;
 
         // Use the native pty implementation for the system
         let pty_system = native_pty_system();
@@ -288,11 +288,23 @@ impl MassiveTerminal {
                 self.window_state.keyboard_modifiers = *modifiers;
             }
             WindowEvent::Ime(_) => {}
-            WindowEvent::CursorMoved { .. } => {}
-            WindowEvent::CursorEntered { .. } => {}
-            WindowEvent::CursorLeft { .. } => {}
+            WindowEvent::CursorMoved {
+                device_id,
+                position,
+            } => {
+                self.window_state.cursor_moved(*device_id, *position);
+                self.hit_test((position.x, position.y));
+            }
+            WindowEvent::CursorEntered { device_id } => {
+                self.window_state.cursor_entered(*device_id);
+            }
+            WindowEvent::CursorLeft { device_id } => {
+                self.window_state.cursor_left(*device_id);
+            }
             WindowEvent::MouseWheel { .. } => {}
-            WindowEvent::MouseInput { .. } => {}
+            WindowEvent::MouseInput { button, state, .. } => {
+                if *button == MouseButton::Left && *state == ElementState::Pressed {}
+            }
             WindowEvent::PinchGesture { .. } => {}
             WindowEvent::PanGesture { .. } => {}
             WindowEvent::DoubleTapGesture { .. } => {}
@@ -331,6 +343,75 @@ impl MassiveTerminal {
         self.panel.resize(terminal.rows(), &self.scene);
 
         Ok(())
+    }
+
+    fn hit_test(&mut self, pos_px: (f64, f64)) -> Option<(usize, usize)> {
+        use cgmath::{InnerSpace, Point3, SquareMatrix, Vector4};
+
+        // Combine view-projection with panel transform so panel space acts as world space.
+        let vp_panel = self.renderer.view_projection() * *self.panel_matrix.value();
+        let inv_vp_panel = vp_panel.invert()?; // panel_from_clip
+
+        // Screen -> NDC (flip Y)
+        let surface_size = self.renderer.geometry().surface_size();
+        let ndc_x = (pos_px.0 / surface_size.0 as f64) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (pos_px.1 / surface_size.1 as f64) * 2.0;
+
+        // Unproject near/far in panel space directly
+        let clip_near = Vector4::new(ndc_x, ndc_y, 0.0, 1.0);
+        let clip_far = Vector4::new(ndc_x, ndc_y, 1.0, 1.0);
+        let near_h = inv_vp_panel * clip_near;
+        let far_h = inv_vp_panel * clip_far;
+        if near_h.w.abs() < 1e-12 || far_h.w.abs() < 1e-12 {
+            return None;
+        }
+        let near_p = Point3::new(
+            near_h.x / near_h.w,
+            near_h.y / near_h.w,
+            near_h.z / near_h.w,
+        );
+        let far_p = Point3::new(far_h.x / far_h.w, far_h.y / far_h.w, far_h.z / far_h.w);
+
+        // Ray in panel space
+        let mut dir = far_p - near_p; // Vector3
+        if dir.magnitude2() < 1e-18 {
+            return None;
+        }
+        dir = dir.normalize();
+
+        // Intersect with panel plane z = 0 in panel space.
+        // If ray parallel to plane: dir.z ~ 0.
+        if dir.z.abs() < 1e-12 {
+            return None;
+        }
+        // Solve near_p.z + t*dir.z = 0 -> t = -near_p.z / dir.z
+        let t = -near_p.z / dir.z;
+        if t < 0.0 {
+            return None;
+        }
+        let hit = near_p + dir * t;
+        println!("local hit: {hit:?}");
+
+        // Map to cell coordinates
+        let geom = &self.window_state.geometry;
+        let (cell_w, cell_h) = {
+            let (cw, ch) = geom.terminal.cell_size_px; // field access
+            (cw as f64, ch as f64)
+        };
+        let (panel_px_w, panel_px_h) = geom.inner_size_px();
+        let (panel_px_w, panel_px_h) = (panel_px_w as f64, panel_px_h as f64);
+
+        let (x, y) = (hit.x, hit.y);
+        if x < 0.0 || y < 0.0 || x >= panel_px_w || y >= panel_px_h {
+            return None;
+        }
+        if cell_w <= 0.0 || cell_h <= 0.0 {
+            return None;
+        }
+
+        let col = (x / cell_w).floor() as usize;
+        let row = (y / cell_h).floor() as usize;
+        Some((col, row))
     }
 }
 

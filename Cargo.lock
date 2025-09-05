@@ -2243,6 +2243,7 @@ name = "massive-terminal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cgmath",
  "cosmic-text",
  "derive_more",
  "futures",
