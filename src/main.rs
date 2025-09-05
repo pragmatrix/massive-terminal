@@ -6,19 +6,19 @@ use std::{
 use anyhow::{Result, anyhow};
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use massive_geometry::{Camera, Color, Identity};
-use massive_scene::{Handle, Location, Matrix, Scene};
-use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use tokio::{pin, select, sync::Notify, task};
 use tracing::info;
-
-use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
-use terminal_state::TerminalState;
-use wezterm_term::{Terminal, TerminalConfiguration, color};
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton, WindowEvent},
 };
+
+use massive_geometry::{Camera, Color, Identity};
+use massive_scene::{Handle, Location, Matrix, Scene};
+use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
+use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
+use terminal_state::TerminalState;
+use wezterm_term::{Terminal, TerminalConfiguration, color};
 
 mod geometry;
 mod input;
@@ -114,6 +114,7 @@ impl MassiveTerminal {
         let camera = {
             let fovy: f64 = 45.0;
             let camera_distance = 1.0 / (fovy / 2.0).to_radians().tan();
+            println!("camera dist: {camera_distance}");
             Camera::new((0.0, 0.0, camera_distance), (0.0, 0.0, 0.0))
         };
 
@@ -346,59 +347,20 @@ impl MassiveTerminal {
     }
 
     fn hit_test(&mut self, pos_px: (f64, f64)) -> Option<(usize, usize)> {
-        use cgmath::{InnerSpace, Point3, SquareMatrix, Vector4};
-
-        // Combine view-projection with panel transform so panel space acts as world space.
-        let vp_panel = self.renderer.view_projection() * *self.panel_matrix.value();
-        let inv_vp_panel = vp_panel.invert()?; // panel_from_clip
-
-        // Screen -> NDC (flip Y)
-        let surface_size = self.renderer.geometry().surface_size();
-        let ndc_x = (pos_px.0 / surface_size.0 as f64) * 2.0 - 1.0;
-        let ndc_y = 1.0 - (pos_px.1 / surface_size.1 as f64) * 2.0;
-
-        // Unproject near/far in panel space directly
-        let clip_near = Vector4::new(ndc_x, ndc_y, 0.0, 1.0);
-        let clip_far = Vector4::new(ndc_x, ndc_y, 1.0, 1.0);
-        let near_h = inv_vp_panel * clip_near;
-        let far_h = inv_vp_panel * clip_far;
-        if near_h.w.abs() < 1e-12 || far_h.w.abs() < 1e-12 {
-            return None;
-        }
-        let near_p = Point3::new(
-            near_h.x / near_h.w,
-            near_h.y / near_h.w,
-            near_h.z / near_h.w,
-        );
-        let far_p = Point3::new(far_h.x / far_h.w, far_h.y / far_h.w, far_h.z / far_h.w);
-
-        // Ray in panel space
-        let mut dir = far_p - near_p; // Vector3
-        if dir.magnitude2() < 1e-18 {
-            return None;
-        }
-        dir = dir.normalize();
-
-        // Intersect with panel plane z = 0 in panel space.
-        // If ray parallel to plane: dir.z ~ 0.
-        if dir.z.abs() < 1e-12 {
-            return None;
-        }
-        // Solve near_p.z + t*dir.z = 0 -> t = -near_p.z / dir.z
-        let t = -near_p.z / dir.z;
-        if t < 0.0 {
-            return None;
-        }
-        let hit = near_p + dir * t;
+        // Prepare combined matrix once.
+        let hit = self
+            .renderer
+            .geometry()
+            .unproject_to_model(pos_px, &self.panel_matrix.value())?;
         println!("local hit: {hit:?}");
 
         // Map to cell coordinates
-        let geom = &self.window_state.geometry;
+        let geometry = &self.window_state.geometry;
         let (cell_w, cell_h) = {
-            let (cw, ch) = geom.terminal.cell_size_px; // field access
+            let (cw, ch) = geometry.terminal.cell_size_px; // field access
             (cw as f64, ch as f64)
         };
-        let (panel_px_w, panel_px_h) = geom.inner_size_px();
+        let (panel_px_w, panel_px_h) = geometry.inner_size_px();
         let (panel_px_w, panel_px_h) = (panel_px_w as f64, panel_px_h as f64);
 
         let (x, y) = (hit.x, hit.y);
