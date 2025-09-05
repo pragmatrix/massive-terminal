@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
-use crate::{Panel, WindowState, selection::Selection};
+use crate::{
+    Panel, WindowState,
+    selection::{Selection, SelectionPos},
+};
 use massive_scene::Scene;
 use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
@@ -16,7 +19,7 @@ pub struct TerminalState {
     // For scroll detection. Primary screen only.
     pub current_stable_top_primary: StableRowIndex,
     line_buf: Vec<Line>,
-    pub selection: Selection,
+    selection: Selection,
 }
 
 impl TerminalState {
@@ -144,5 +147,34 @@ impl TerminalState {
         scene: &Scene,
     ) {
         panel.update_cursor(scene, cursor_pos, focused);
+    }
+
+    pub fn selection_begin(&mut self, vis_cell: (usize, usize)) {
+        let pos = self.vis_cell_to_selection_pos(vis_cell);
+        self.selection.begin(pos);
+        println!("{:?}", self.selection);
+    }
+
+    pub fn selection_can_progress(&self) -> bool {
+        self.selection.can_progress()
+    }
+
+    pub fn selection_progress(&mut self, vis_cell: (usize, usize)) {
+        let pos = self.vis_cell_to_selection_pos(vis_cell);
+        self.selection.progress(pos);
+        println!("{:?}", self.selection);
+    }
+
+    pub fn selection_end(&mut self) {
+        self.selection.end();
+        println!("{:?}", self.selection);
+    }
+
+    pub fn vis_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
+        // Bug: What about secondary screen?
+        SelectionPos::new(
+            vis_cell.0,
+            vis_cell.1 as isize + self.current_stable_top_primary,
+        )
     }
 }

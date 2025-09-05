@@ -10,7 +10,7 @@ use tokio::{pin, select, sync::Notify, task};
 use tracing::info;
 use winit::{
     dpi::PhysicalSize,
-    event::{ElementState, MouseButton, WindowEvent},
+    event::{DeviceId, ElementState, MouseButton, WindowEvent},
 };
 
 use massive_geometry::{Camera, Color, Identity};
@@ -294,7 +294,7 @@ impl MassiveTerminal {
                 position,
             } => {
                 self.window_state.cursor_moved(*device_id, *position);
-                self.hit_test((position.x, position.y));
+                self.selection_progress(*device_id);
             }
             WindowEvent::CursorEntered { device_id } => {
                 self.window_state.cursor_entered(*device_id);
@@ -303,8 +303,19 @@ impl MassiveTerminal {
                 self.window_state.cursor_left(*device_id);
             }
             WindowEvent::MouseWheel { .. } => {}
-            WindowEvent::MouseInput { button, state, .. } => {
-                if *button == MouseButton::Left && *state == ElementState::Pressed {}
+            WindowEvent::MouseInput {
+                button,
+                state,
+                device_id,
+            } => {
+                if *button == MouseButton::Left {
+                    match state {
+                        ElementState::Pressed => {
+                            self.selection_begin(*device_id);
+                        }
+                        ElementState::Released => self.selection_end(),
+                    }
+                }
             }
             WindowEvent::PinchGesture { .. } => {}
             WindowEvent::PanGesture { .. } => {}
@@ -346,12 +357,33 @@ impl MassiveTerminal {
         Ok(())
     }
 
+    fn selection_begin(&mut self, device: DeviceId) -> Option<()> {
+        let pos = self.window_state.cursor_state(device).pos_px?;
+        let cells_hit = self.hit_test(pos)?;
+        self.terminal_state.selection_begin(cells_hit);
+        ().into()
+    }
+
+    fn selection_progress(&mut self, device: DeviceId) -> Option<()> {
+        if !self.terminal_state.selection_can_progress() {
+            return None;
+        }
+        let pos = self.window_state.cursor_state(device).pos_px?;
+        let cells_hit = self.hit_test(pos)?;
+        self.terminal_state.selection_progress(cells_hit);
+        ().into()
+    }
+
+    fn selection_end(&mut self) {
+        self.terminal_state.selection_end();
+    }
+
     fn hit_test(&mut self, pos_px: (f64, f64)) -> Option<(usize, usize)> {
         // Prepare combined matrix once.
         let hit = self
             .renderer
             .geometry()
-            .unproject_to_model(pos_px, &self.panel_matrix.value())?;
+            .unproject_to_model_z0(pos_px, &self.panel_matrix.value())?;
         println!("local hit: {hit:?}");
 
         // Map to cell coordinates
