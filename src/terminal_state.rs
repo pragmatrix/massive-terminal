@@ -131,6 +131,8 @@ impl TerminalState {
 
         Self::update_cursor(cursor_pos, panel, window_state.focused, scene);
 
+        panel.update_selection(scene, self.selection.range(), &window_state.terminal);
+
         // Commit
 
         self.last_rendered_seq_no = current_seq_no;

@@ -1,5 +1,12 @@
 use portable_pty::PtySize;
 
+// euclid definitions
+
+pub struct CellUnit;
+
+pub type CellRect = euclid::Rect<usize, CellUnit>;
+pub type CellPoint = euclid::Point2D<usize, CellUnit>;
+
 #[derive(Debug)]
 pub struct WindowGeometry {
     _scale_factor: f64,
@@ -8,6 +15,7 @@ pub struct WindowGeometry {
     /// Padding around the terminal in physical pixels.
     padding_px: u32,
 
+    // Architecture: Even thogh the WindowGeometry is built from the terminal's geometry, this does not belong here.
     pub terminal: TerminalGeometry,
 }
 

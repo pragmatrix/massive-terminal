@@ -1,5 +1,8 @@
+use std::cmp::Ordering;
 use tracing::error;
 use wezterm_term::StableRowIndex;
+
+use crate::geometry::CellPoint;
 
 #[derive(Debug, Default)]
 pub struct Selection {
@@ -54,17 +57,39 @@ impl Selection {
             }
         }
     }
+
+    // Normalized selection range
+    pub fn range(&self) -> Option<SelectionRange> {
+        if let SelectionState::Selecting { start, end } | SelectionState::Selected { start, end } =
+            self.state
+            && start != end
+        {
+            return Some(SelectionRange::new(start, end));
+        }
+        None
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectionPos {
     left: usize,
     top: StableRowIndex,
 }
 
+impl PartialOrd for SelectionPos {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some((self.top, self.left).cmp(&(other.top, other.left)))
+    }
+}
+
 impl SelectionPos {
     pub fn new(left: usize, top: StableRowIndex) -> Self {
         Self { left, top }
+    }
+
+    pub fn point(&self) -> CellPoint {
+        assert!(self.top >= 0);
+        (self.left, self.top as usize).into()
     }
 }
 
@@ -83,4 +108,24 @@ pub enum SelectionState {
         start: SelectionPos,
         end: SelectionPos,
     },
+}
+
+/// Normalized selection range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionRange {
+    pub start: SelectionPos,
+    pub end: SelectionPos,
+}
+
+impl SelectionRange {
+    pub fn new(start: SelectionPos, end: SelectionPos) -> Self {
+        if end >= start {
+            Self { start, end }
+        } else {
+            Self {
+                start: end,
+                end: start,
+            }
+        }
+    }
 }

@@ -2098,9 +2098,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.27"
+version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
+checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "loop9"
@@ -2159,6 +2159,7 @@ version = "0.1.0"
 dependencies = [
  "cgmath",
  "derive_more",
+ "euclid",
  "flo_curves",
  "log",
  "serde",
@@ -2246,6 +2247,7 @@ dependencies = [
  "cgmath",
  "cosmic-text",
  "derive_more",
+ "euclid",
  "futures",
  "massive-geometry",
  "massive-scene",
@@ -2258,6 +2260,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tuple",
  "wezterm-term",
  "winit",
 ]
@@ -4249,6 +4252,16 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "tuple"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bb9f6bd73479481158ba8ee3edf17aca93354623d13f02e96a2014fdbc1c37e"
+dependencies = [
+ "num-traits",
+ "serde",
+]
 
 [[package]]
 name = "typenum"

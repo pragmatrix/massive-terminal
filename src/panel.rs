@@ -10,6 +10,8 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
+use tuple::Map;
+
 use termwiz::{
     cellcluster::CellCluster,
     color::ColorAttribute,
@@ -21,7 +23,11 @@ use massive_geometry::{Identity, Point, Rect, Size};
 use massive_scene::{Handle, Location, Matrix, Scene, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 
-use crate::TerminalFont;
+use crate::{
+    TerminalFont,
+    geometry::{CellRect, TerminalGeometry},
+    selection::SelectionRange,
+};
 
 /// Panel is the representation of the terminal.
 ///
@@ -41,8 +47,8 @@ pub struct Panel {
     /// This effectively moves all lines _only_ up.
     scroll_matrix: Handle<Matrix>,
     scroll_location: Handle<Location>,
-    /// The number of lines with which _all_ lines are transformed upwards. If the view scrolls up and a new line
-    /// comes in on the bottom, this increases.
+    /// The number of lines with which _all_ lines are transformed upwards. If the view scrolls up
+    /// and a new line comes in on the bottom, this value increases.
     scroll_offset: i64,
 
     /// The visible lines. This contains _only_ the lines currently visible in the terminal.
@@ -52,6 +58,7 @@ pub struct Panel {
     /// VecDeque because we want to optimize them for scrolling.
     visible_lines: VecDeque<Handle<Visual>>,
     cursor: Option<Handle<Visual>>,
+    selection: Option<Handle<Visual>>,
 }
 
 impl Panel {
@@ -92,6 +99,7 @@ impl Panel {
             scroll_location,
             visible_lines: line_visuals,
             cursor: None,
+            selection: None,
         }
     }
 }
@@ -372,14 +380,16 @@ enum BasicCursorShape {
     Bar,
 }
 
+// Cursor
+
 impl Panel {
-    pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, focused: bool) {
+    pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, window_focused: bool) {
         match pos.visibility {
             CursorVisibility::Hidden => {
                 self.cursor = None;
             }
             CursorVisibility::Visible => {
-                let basic_shape = Self::basic_cursor_shape(pos.shape, focused);
+                let basic_shape = Self::basic_cursor_shape(pos.shape, window_focused);
                 let shape = self.cursor_shape(basic_shape, pos);
                 let visual = Visual::new(self.scroll_location.clone(), [shape]);
                 self.cursor = Some(scene.stage(visual));
@@ -441,6 +451,81 @@ impl Panel {
         };
 
         massive_shapes::Rect::new(rect, color::from_srgba(cursor_color)).into()
+    }
+}
+
+// Selection
+
+impl Panel {
+    pub fn update_selection(
+        &mut self,
+        scene: &Scene,
+        selection: Option<SelectionRange>,
+        terminal_geometry: &TerminalGeometry,
+    ) {
+        match selection {
+            Some(selection) => {
+                let rects_stable = Self::selection_rects(&selection, terminal_geometry.columns());
+                let cell_size = terminal_geometry.cell_size_px.map(f64::from);
+
+                let rects_final = rects_stable.iter().map(|r| {
+                    r.to_f64()
+                        .scale(cell_size.0, cell_size.1)
+                        .translate((0., self.scroll_offset as f64 * cell_size.1).into())
+                });
+
+                let selection_color = color::from_srgba(self.color_palette.selection_bg);
+
+                let shapes: Vec<_> = rects_final
+                    .map(|r| massive_shapes::Rect::new(r, selection_color).into())
+                    .collect();
+
+                let visual = Visual::new(self.scroll_location.clone(), shapes);
+
+                //
+                match &mut self.selection {
+                    Some(selection) => {
+                        selection.update_if_changed(visual);
+                    }
+                    None => self.selection = Some(scene.stage(visual)),
+                }
+            }
+            None => self.selection = None,
+        }
+    }
+
+    /// A selection can be rendered in one to three rectangles.
+    fn selection_rects(selection: &SelectionRange, terminal_columns: usize) -> Vec<CellRect> {
+        debug_assert!(selection.end >= selection.start);
+        let start_point = selection.start.point();
+        let end_point = selection.end.point();
+
+        let lines_covering = end_point.y + 1 - start_point.y;
+        debug_assert!(lines_covering > 0);
+
+        if lines_covering == 1 {
+            return vec![CellRect::new(
+                start_point,
+                (end_point.x - start_point.x, 1).into(),
+            )];
+        }
+
+        let top_line = CellRect::new(start_point, (terminal_columns - start_point.x, 1).into());
+
+        let bottom_line = CellRect::new((0, end_point.y).into(), (end_point.x + 1, 1).into());
+
+        if lines_covering == 2 {
+            return vec![top_line, bottom_line];
+        }
+
+        vec![
+            top_line,
+            CellRect::new(
+                (0, start_point.y + 1).into(),
+                (terminal_columns, lines_covering - 2).into(),
+            ),
+            bottom_line,
+        ]
     }
 }
 
