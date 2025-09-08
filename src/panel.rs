@@ -26,7 +26,7 @@ use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, Tex
 use crate::{
     TerminalFont,
     geometry::{CellRect, TerminalGeometry},
-    selection::SelectionRange,
+    selection::{NormalizedSelectionRange, SelectionRange},
 };
 
 /// Panel is the representation of the terminal.
@@ -460,7 +460,7 @@ impl Panel {
     pub fn update_selection(
         &mut self,
         scene: &Scene,
-        selection: Option<SelectionRange>,
+        selection: Option<NormalizedSelectionRange>,
         terminal_geometry: &TerminalGeometry,
     ) {
         match selection {

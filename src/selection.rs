@@ -1,3 +1,4 @@
+use derive_more::Deref;
 use std::{cmp::Ordering, ops::Range};
 use tracing::error;
 use wezterm_term::StableRowIndex;
@@ -23,14 +24,12 @@ impl Selection {
 
     pub fn progress(&mut self, ending_pos: SelectionPos) {
         self.state = match &self.state {
-            SelectionState::Begun { pos } => SelectionState::Selecting {
-                start: *pos,
-                end: ending_pos,
-            },
-            SelectionState::Selecting { start, .. } => SelectionState::Selecting {
-                start: *start,
-                end: ending_pos,
-            },
+            SelectionState::Begun { pos } => {
+                SelectionState::Selecting(SelectionRange::new(*pos, ending_pos))
+            }
+            SelectionState::Selecting(SelectionRange { start, .. }) => {
+                SelectionState::Selecting(SelectionRange::new(*start, ending_pos))
+            }
             _ => {
                 error!(
                     "Internal error: Selection is progressing, but state is {:?}",
@@ -44,10 +43,7 @@ impl Selection {
     pub fn end(&mut self) {
         self.state = match &self.state {
             SelectionState::Begun { .. } => SelectionState::Unselected,
-            SelectionState::Selecting { start, end } => SelectionState::Selected {
-                start: *start,
-                end: *end,
-            },
+            SelectionState::Selecting(range) => SelectionState::Selected(range.normalized()),
             _ => {
                 error!(
                     "Internal error: Selection is ending, but state is {:?}",
@@ -59,14 +55,12 @@ impl Selection {
     }
 
     // Normalized selection range
-    pub fn range(&self) -> Option<SelectionRange> {
-        if let SelectionState::Selecting { start, end } | SelectionState::Selected { start, end } =
-            self.state
-            && start != end
-        {
-            return Some(SelectionRange::new(start, end));
+    pub fn range(&self) -> Option<NormalizedSelectionRange> {
+        match self.state {
+            SelectionState::Selecting(range) => Some(range.normalized()),
+            SelectionState::Selected(range) => Some(range),
+            _ => None,
         }
-        None
     }
 }
 
@@ -100,17 +94,11 @@ pub enum SelectionState {
     Begun {
         pos: SelectionPos,
     },
-    Selecting {
-        start: SelectionPos,
-        end: SelectionPos,
-    },
-    Selected {
-        start: SelectionPos,
-        end: SelectionPos,
-    },
+    Selecting(SelectionRange),
+    Selected(NormalizedSelectionRange),
 }
 
-/// Normalized selection range.
+/// Selection range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectionRange {
     pub start: SelectionPos,
@@ -119,13 +107,17 @@ pub struct SelectionRange {
 
 impl SelectionRange {
     pub fn new(start: SelectionPos, end: SelectionPos) -> Self {
-        if end >= start {
-            Self { start, end }
+        Self { start, end }
+    }
+
+    pub fn normalized(&self) -> NormalizedSelectionRange {
+        if self.end >= self.start {
+            NormalizedSelectionRange(*self)
         } else {
-            Self {
-                start: end,
-                end: start,
-            }
+            NormalizedSelectionRange(Self {
+                start: self.end,
+                end: self.start,
+            })
         }
     }
 
@@ -154,6 +146,15 @@ impl SelectionRange {
             _ if row == self.start.top => self.start.left..usize::MAX,
             _ => 0..usize::MAX,
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Deref)]
+pub struct NormalizedSelectionRange(SelectionRange);
+
+impl NormalizedSelectionRange {
+    pub fn is_empty(&self) -> bool {
+        self.0.start == self.0.end
     }
 }
 
