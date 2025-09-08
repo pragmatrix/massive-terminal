@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
 use tokio::{pin, select, sync::Notify, task};
@@ -19,7 +20,7 @@ use massive_scene::{Handle, Location, Matrix, Scene};
 use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use terminal_state::TerminalState;
-use wezterm_term::{StableRowIndex, Terminal, TerminalConfiguration, color};
+use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConfiguration, color};
 
 mod geometry;
 mod input;
@@ -72,6 +73,9 @@ struct MassiveTerminal {
 
     window_state: WindowState,
     terminal_state: TerminalState,
+
+    #[debug(skip)]
+    clipboard: Clipboard,
 }
 
 impl MassiveTerminal {
@@ -183,6 +187,7 @@ impl MassiveTerminal {
             panel_matrix,
             window_state: WindowState::new(window_geometry),
             terminal_state: TerminalState::new(last_rendered_seq_no),
+            clipboard: Clipboard::new()?,
         })
     }
 
@@ -258,6 +263,8 @@ impl MassiveTerminal {
         // Ok(())
     }
 
+    // Robustness: May not end the terminal when this returns an error?
+    // Architecture: Think about a general strategy about how to handle recoverable errors.
     fn process_window_event(&mut self, event: &WindowEvent) -> Result<()> {
         match event {
             WindowEvent::ActivationTokenDone { .. } => {}
@@ -279,9 +286,17 @@ impl MassiveTerminal {
                     input::convert_key_event(event, self.window_state.keyboard_modifiers.state())
                 {
                     match event.state {
-                        ElementState::Pressed => {
-                            self.terminal.lock().unwrap().key_down(key, modifiers)?;
-                        }
+                        ElementState::Pressed => match key {
+                            KeyCode::Char('c') if modifiers == KeyModifiers::SUPER => {
+                                self.copy()?;
+                            }
+                            KeyCode::Char('v') if modifiers == KeyModifiers::SUPER => {
+                                self.paste()?
+                            }
+                            _ => {
+                                self.terminal.lock().unwrap().key_down(key, modifiers)?;
+                            }
+                        },
                         ElementState::Released => {
                             self.terminal.lock().unwrap().key_up(key, modifiers)?;
                         }
@@ -409,6 +424,28 @@ impl MassiveTerminal {
         let col = (x / cell_w).floor() as usize;
         let row = (y / cell_h).floor() as usize;
         Some((col, row))
+    }
+}
+
+// Clipboard
+
+impl MassiveTerminal {
+    fn copy(&mut self) -> Result<()> {
+        let text = self.selected_text();
+        if !text.is_empty() {
+            // Robustness: May not fail if this returns an error.
+            self.clipboard.set_text(text)?;
+        }
+        Ok(())
+    }
+
+    fn paste(&mut self) -> Result<()> {
+        // Robustness: May not fail if this returns an error?
+        let text = self.clipboard.get_text()?;
+        if !text.is_empty() {
+            self.terminal.lock().unwrap().send_paste(&text)?;
+        }
+        Ok(())
     }
 }
 

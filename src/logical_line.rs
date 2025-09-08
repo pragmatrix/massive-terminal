@@ -12,10 +12,12 @@ pub struct LogicalLine {
 }
 
 impl LogicalLine {
+    #[allow(unused)]
     pub fn contains_y(&self, y: StableRowIndex) -> bool {
         y >= self.first_row && y < self.first_row + self.physical_lines.len() as StableRowIndex
     }
 
+    #[allow(unused)]
     pub fn xy_to_logical_x(&self, x: usize, y: StableRowIndex) -> usize {
         let mut offset = 0;
         for (idx, line) in self.physical_lines.iter().enumerate() {
@@ -35,6 +37,7 @@ impl LogicalLine {
         offset + x
     }
 
+    #[allow(unused)]
     pub fn logical_x_to_physical_coord(&self, x: usize) -> (StableRowIndex, usize) {
         let mut y = self.first_row;
         let mut idx = 0;
@@ -55,7 +58,7 @@ impl LogicalLine {
     /// Create a logical line by concatenating a number of physical lines that make up one logical line.
     pub fn from_physical_range(stable_range: Range<StableRowIndex>, lines: &[&Line]) -> Self {
         Self {
-            physical_lines: lines.iter().map(|l| *l).cloned().collect(),
+            physical_lines: lines.iter().copied().cloned().collect(),
             logical: logical_from_physicals(lines),
             first_row: stable_range.start,
         }

@@ -2,7 +2,7 @@ use std::{cmp::Ordering, ops::Range};
 use tracing::error;
 use wezterm_term::StableRowIndex;
 
-use crate::{MassiveTerminal, geometry::CellPoint};
+use crate::geometry::CellPoint;
 
 #[derive(Debug, Default)]
 pub struct Selection {
