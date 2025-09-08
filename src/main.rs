@@ -1,5 +1,6 @@
 use std::{
     io::{self, ErrorKind},
+    ops::Range,
     sync::{Arc, Mutex},
 };
 
@@ -18,10 +19,11 @@ use massive_scene::{Handle, Location, Matrix, Scene};
 use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use terminal_state::TerminalState;
-use wezterm_term::{Terminal, TerminalConfiguration, color};
+use wezterm_term::{StableRowIndex, Terminal, TerminalConfiguration, color};
 
 mod geometry;
 mod input;
+mod logical_line;
 mod panel;
 mod selection;
 mod terminal_font;
@@ -33,6 +35,7 @@ pub use terminal_font::*;
 
 use crate::{
     geometry::{TerminalGeometry, WindowGeometry},
+    logical_line::LogicalLine,
     window_state::WindowState,
 };
 
@@ -406,6 +409,71 @@ impl MassiveTerminal {
         let col = (x / cell_w).floor() as usize;
         let row = (y / cell_h).floor() as usize;
         Some((col, row))
+    }
+}
+
+// Selection
+
+impl MassiveTerminal {
+    // Copied from wezterm_gui/src/terminwindow/selection.rs
+
+    /// Returns the selected text
+    pub fn selected_text(&self) -> String {
+        let mut s = String::new();
+        // Feature: Rectangular selection.
+        let rectangular = false;
+        let Some(sel) = self.terminal_state.selection().range() else {
+            return s;
+        };
+        let mut last_was_wrapped = false;
+        let first_row = sel.rows().start;
+        let last_row = sel.rows().end;
+
+        let terminal = self.terminal.lock().unwrap();
+
+        for line in Self::get_logical_lines(&terminal, sel.rows()) {
+            if !s.is_empty() && !last_was_wrapped {
+                s.push('\n');
+            }
+            let last_idx = line.physical_lines.len().saturating_sub(1);
+            for (idx, phys) in line.physical_lines.iter().enumerate() {
+                let this_row = line.first_row + idx as StableRowIndex;
+                if this_row >= first_row && this_row < last_row {
+                    let last_phys_idx = phys.len().saturating_sub(1);
+                    let cols = sel.cols_for_row(this_row, rectangular);
+                    let last_col_idx = cols.end.saturating_sub(1).min(last_phys_idx);
+                    let col_span = phys.columns_as_str(cols);
+                    // Only trim trailing whitespace if we are the last line
+                    // in a wrapped sequence
+                    if idx == last_idx {
+                        s.push_str(col_span.trim_end());
+                    } else {
+                        s.push_str(&col_span);
+                    }
+
+                    last_was_wrapped = last_col_idx == last_phys_idx
+                        && phys
+                            .get_cell(last_col_idx)
+                            .map(|c| c.attrs().wrapped())
+                            .unwrap_or(false);
+                }
+            }
+        }
+
+        s
+    }
+
+    fn get_logical_lines(terminal: &Terminal, lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
+        let mut logical_lines = Vec::new();
+
+        terminal
+            .screen()
+            .for_each_logical_line_in_stable_range(lines, |stable_range, lines| {
+                logical_lines.push(LogicalLine::from_physical_range(stable_range, lines));
+                true
+            });
+
+        logical_lines
     }
 }
 

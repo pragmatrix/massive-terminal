@@ -151,8 +151,12 @@ impl TerminalState {
         panel.update_cursor(scene, cursor_pos, focused);
     }
 
+    pub fn selection(&self) -> &Selection {
+        &self.selection
+    }
+
     pub fn selection_begin(&mut self, vis_cell: (usize, usize)) {
-        let pos = self.vis_cell_to_selection_pos(vis_cell);
+        let pos = self.visible_cell_to_selection_pos(vis_cell);
         self.selection.begin(pos);
         println!("{:?}", self.selection);
     }
@@ -161,8 +165,8 @@ impl TerminalState {
         self.selection.can_progress()
     }
 
-    pub fn selection_progress(&mut self, vis_cell: (usize, usize)) {
-        let pos = self.vis_cell_to_selection_pos(vis_cell);
+    pub fn selection_progress(&mut self, visible_cell: (usize, usize)) {
+        let pos = self.visible_cell_to_selection_pos(visible_cell);
         self.selection.progress(pos);
         println!("{:?}", self.selection);
     }
@@ -172,7 +176,7 @@ impl TerminalState {
         println!("{:?}", self.selection);
     }
 
-    pub fn vis_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
+    pub fn visible_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
         // Bug: What about secondary screen?
         SelectionPos::new(
             vis_cell.0,
