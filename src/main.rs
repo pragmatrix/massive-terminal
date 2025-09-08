@@ -1,28 +1,32 @@
 use std::{
     io::{self, ErrorKind},
+    ops::Range,
     sync::{Arc, Mutex},
 };
 
 use anyhow::{Result, anyhow};
+use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use massive_geometry::{Camera, Color, Identity};
-use massive_scene::{Handle, Location, Matrix, Scene};
-use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use tokio::{pin, select, sync::Notify, task};
 use tracing::info;
-
-use massive_shell::{ApplicationContext, AsyncWindowRenderer, RendererMessage, ShellWindow, shell};
-use terminal_state::TerminalState;
-use wezterm_term::{Terminal, TerminalConfiguration, color};
 use winit::{
     dpi::PhysicalSize,
-    event::{ElementState, WindowEvent},
+    event::{DeviceId, ElementState, MouseButton, WindowEvent},
 };
+
+use massive_geometry::{Camera, Color, Identity};
+use massive_scene::{Handle, Location, Matrix, Scene};
+use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
+use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
+use terminal_state::TerminalState;
+use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConfiguration, color};
 
 mod geometry;
 mod input;
+mod logical_line;
 mod panel;
+mod selection;
 mod terminal_font;
 mod terminal_state;
 mod window_state;
@@ -32,6 +36,7 @@ pub use terminal_font::*;
 
 use crate::{
     geometry::{TerminalGeometry, WindowGeometry},
+    logical_line::LogicalLine,
     window_state::WindowState,
 };
 
@@ -68,6 +73,9 @@ struct MassiveTerminal {
 
     window_state: WindowState,
     terminal_state: TerminalState,
+
+    #[debug(skip)]
+    clipboard: Clipboard,
 }
 
 impl MassiveTerminal {
@@ -109,7 +117,7 @@ impl MassiveTerminal {
 
         let font_system = Arc::new(Mutex::new(font_system));
 
-        // Ergonomics: Camera::default() should create this one.
+        // Ergonomics: Camera::default() should probably create this one.
         let camera = {
             let fovy: f64 = 45.0;
             let camera_distance = 1.0 / (fovy / 2.0).to_radians().tan();
@@ -121,8 +129,7 @@ impl MassiveTerminal {
             .new_renderer(font_system.clone(), camera, inner_window_size)
             .await?;
 
-        // Ergonomics: Feels weird sending a message to set the background color.
-        renderer.post_msg(RendererMessage::SetBackgroundColor(Some(Color::BLACK)))?;
+        renderer.set_background_color(Some(Color::BLACK))?;
 
         // Use the native pty implementation for the system
         let pty_system = native_pty_system();
@@ -179,6 +186,7 @@ impl MassiveTerminal {
             panel_matrix,
             window_state: WindowState::new(window_geometry),
             terminal_state: TerminalState::new(last_rendered_seq_no),
+            clipboard: Clipboard::new()?,
         })
     }
 
@@ -254,6 +262,8 @@ impl MassiveTerminal {
         // Ok(())
     }
 
+    // Robustness: May not end the terminal when this returns an error?
+    // Architecture: Think about a general strategy about how to handle recoverable errors.
     fn process_window_event(&mut self, event: &WindowEvent) -> Result<()> {
         match event {
             WindowEvent::ActivationTokenDone { .. } => {}
@@ -275,9 +285,17 @@ impl MassiveTerminal {
                     input::convert_key_event(event, self.window_state.keyboard_modifiers.state())
                 {
                     match event.state {
-                        ElementState::Pressed => {
-                            self.terminal.lock().unwrap().key_down(key, modifiers)?;
-                        }
+                        ElementState::Pressed => match key {
+                            KeyCode::Char('c') if modifiers == KeyModifiers::SUPER => {
+                                self.copy()?;
+                            }
+                            KeyCode::Char('v') if modifiers == KeyModifiers::SUPER => {
+                                self.paste()?
+                            }
+                            _ => {
+                                self.terminal.lock().unwrap().key_down(key, modifiers)?;
+                            }
+                        },
                         ElementState::Released => {
                             self.terminal.lock().unwrap().key_up(key, modifiers)?;
                         }
@@ -288,11 +306,34 @@ impl MassiveTerminal {
                 self.window_state.keyboard_modifiers = *modifiers;
             }
             WindowEvent::Ime(_) => {}
-            WindowEvent::CursorMoved { .. } => {}
-            WindowEvent::CursorEntered { .. } => {}
-            WindowEvent::CursorLeft { .. } => {}
+            WindowEvent::CursorMoved {
+                device_id,
+                position,
+            } => {
+                self.window_state.cursor_moved(*device_id, *position);
+                self.selection_progress(*device_id);
+            }
+            WindowEvent::CursorEntered { device_id } => {
+                self.window_state.cursor_entered(*device_id);
+            }
+            WindowEvent::CursorLeft { device_id } => {
+                self.window_state.cursor_left(*device_id);
+            }
             WindowEvent::MouseWheel { .. } => {}
-            WindowEvent::MouseInput { .. } => {}
+            WindowEvent::MouseInput {
+                button,
+                state,
+                device_id,
+            } => {
+                if *button == MouseButton::Left {
+                    match state {
+                        ElementState::Pressed => {
+                            self.selection_begin(*device_id);
+                        }
+                        ElementState::Released => self.selection_end(),
+                    }
+                }
+            }
             WindowEvent::PinchGesture { .. } => {}
             WindowEvent::PanGesture { .. } => {}
             WindowEvent::DoubleTapGesture { .. } => {}
@@ -331,6 +372,143 @@ impl MassiveTerminal {
         self.panel.resize(terminal.rows(), &self.scene);
 
         Ok(())
+    }
+
+    fn selection_begin(&mut self, device: DeviceId) -> Option<()> {
+        let pos = self.window_state.cursor_state(device).pos_px?;
+        let cells_hit = self.hit_test(pos)?;
+        self.terminal_state.selection_begin(cells_hit);
+        ().into()
+    }
+
+    fn selection_progress(&mut self, device: DeviceId) -> Option<()> {
+        if !self.terminal_state.selection_can_progress() {
+            return None;
+        }
+        let pos = self.window_state.cursor_state(device).pos_px?;
+        let cells_hit = self.hit_test(pos)?;
+        self.terminal_state.selection_progress(cells_hit);
+        ().into()
+    }
+
+    fn selection_end(&mut self) {
+        self.terminal_state.selection_end();
+    }
+
+    fn hit_test(&mut self, pos_px: (f64, f64)) -> Option<(usize, usize)> {
+        // Prepare combined matrix once.
+        let hit = self
+            .renderer
+            .geometry()
+            .unproject_to_model_z0(pos_px, &self.panel_matrix.value())?;
+
+        // Map to cell coordinates
+        let geometry = &self.window_state.geometry;
+        let (cell_w, cell_h) = {
+            let (cw, ch) = geometry.terminal.cell_size_px; // field access
+            (cw as f64, ch as f64)
+        };
+        let (panel_px_w, panel_px_h) = geometry.inner_size_px();
+        let (panel_px_w, panel_px_h) = (panel_px_w as f64, panel_px_h as f64);
+
+        let (x, y) = (hit.x, hit.y);
+        if x < 0.0 || y < 0.0 || x >= panel_px_w || y >= panel_px_h {
+            return None;
+        }
+        if cell_w <= 0.0 || cell_h <= 0.0 {
+            return None;
+        }
+
+        let col = (x / cell_w).floor() as usize;
+        let row = (y / cell_h).floor() as usize;
+        Some((col, row))
+    }
+}
+
+// Clipboard
+
+impl MassiveTerminal {
+    fn copy(&mut self) -> Result<()> {
+        let text = self.selected_text();
+        if !text.is_empty() {
+            // Robustness: May not fail if this returns an error.
+            self.clipboard.set_text(text)?;
+        }
+        Ok(())
+    }
+
+    fn paste(&mut self) -> Result<()> {
+        // Robustness: May not fail if this returns an error?
+        let text = self.clipboard.get_text()?;
+        if !text.is_empty() {
+            self.terminal.lock().unwrap().send_paste(&text)?;
+        }
+        Ok(())
+    }
+}
+
+// Selection
+
+impl MassiveTerminal {
+    // Copied from wezterm_gui/src/terminwindow/selection.rs
+
+    /// Returns the selected text
+    pub fn selected_text(&self) -> String {
+        let mut s = String::new();
+        // Feature: Rectangular selection.
+        let rectangular = false;
+        let Some(sel) = self.terminal_state.selection().range() else {
+            return s;
+        };
+        let mut last_was_wrapped = false;
+        let first_row = sel.rows().start;
+        let last_row = sel.rows().end;
+
+        let terminal = self.terminal.lock().unwrap();
+
+        for line in Self::get_logical_lines(&terminal, sel.rows()) {
+            if !s.is_empty() && !last_was_wrapped {
+                s.push('\n');
+            }
+            let last_idx = line.physical_lines.len().saturating_sub(1);
+            for (idx, phys) in line.physical_lines.iter().enumerate() {
+                let this_row = line.first_row + idx as StableRowIndex;
+                if this_row >= first_row && this_row < last_row {
+                    let last_phys_idx = phys.len().saturating_sub(1);
+                    let cols = sel.cols_for_row(this_row, rectangular);
+                    let last_col_idx = cols.end.saturating_sub(1).min(last_phys_idx);
+                    let col_span = phys.columns_as_str(cols);
+                    // Only trim trailing whitespace if we are the last line
+                    // in a wrapped sequence
+                    if idx == last_idx {
+                        s.push_str(col_span.trim_end());
+                    } else {
+                        s.push_str(&col_span);
+                    }
+
+                    last_was_wrapped = last_col_idx == last_phys_idx
+                        && phys
+                            .get_cell(last_col_idx)
+                            .map(|c| c.attrs().wrapped())
+                            .unwrap_or(false);
+                }
+            }
+        }
+
+        s
+    }
+
+    fn get_logical_lines(terminal: &Terminal, lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
+        let mut logical_lines = Vec::new();
+
+        terminal
+            .screen()
+            .for_each_logical_line_in_stable_range(lines, |stable_range, lines| {
+                logical_lines.push(LogicalLine::from_physical_range(stable_range, lines));
+                true
+            });
+
+        logical_lines
     }
 }
 

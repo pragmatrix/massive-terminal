@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
-use crate::{Panel, WindowState};
+use crate::{
+    Panel, WindowState,
+    selection::{Selection, SelectionPos},
+};
 use massive_scene::Scene;
 use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
@@ -16,6 +19,7 @@ pub struct TerminalState {
     // For scroll detection. Primary screen only.
     pub current_stable_top_primary: StableRowIndex,
     line_buf: Vec<Line>,
+    selection: Selection,
 }
 
 impl TerminalState {
@@ -24,6 +28,7 @@ impl TerminalState {
             last_rendered_seq_no,
             current_stable_top_primary: 0,
             line_buf: Vec::new(),
+            selection: Default::default(),
         }
     }
 
@@ -126,6 +131,8 @@ impl TerminalState {
 
         Self::update_cursor(cursor_pos, panel, window_state.focused, scene);
 
+        panel.update_selection(scene, self.selection.range(), &window_state.terminal);
+
         // Commit
 
         self.last_rendered_seq_no = current_seq_no;
@@ -142,5 +149,35 @@ impl TerminalState {
         scene: &Scene,
     ) {
         panel.update_cursor(scene, cursor_pos, focused);
+    }
+
+    pub fn selection(&self) -> &Selection {
+        &self.selection
+    }
+
+    pub fn selection_begin(&mut self, vis_cell: (usize, usize)) {
+        let pos = self.visible_cell_to_selection_pos(vis_cell);
+        self.selection.begin(pos);
+    }
+
+    pub fn selection_can_progress(&self) -> bool {
+        self.selection.can_progress()
+    }
+
+    pub fn selection_progress(&mut self, visible_cell: (usize, usize)) {
+        let pos = self.visible_cell_to_selection_pos(visible_cell);
+        self.selection.progress(pos);
+    }
+
+    pub fn selection_end(&mut self) {
+        self.selection.end();
+    }
+
+    pub fn visible_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
+        // Bug: What about secondary screen?
+        SelectionPos::new(
+            vis_cell.0,
+            vis_cell.1 as isize + self.current_stable_top_primary,
+        )
     }
 }

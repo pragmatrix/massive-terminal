@@ -18,8 +18,11 @@ massive-shell.workspace = true
 massive-geometry.workspace = true
 
 anyhow.workspace = true
+arboard.workspace = true
+cgmath.workspace = true
 cosmic-text.workspace = true
 derive_more.workspace = true
+euclid.workspace = true
 futures.workspace = true
 portable-pty.workspace = true
 rangeset.workspace = true
@@ -28,6 +31,7 @@ termwiz.workspace = true
 tokio-util.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tuple.workspace = true
 winit.workspace = true # Ergonomics: Get rid of the winit dependency. Used for because of LogicalSize.
 
 [workspace.dependencies]
@@ -43,6 +47,7 @@ massive-shell = { path = "massive/shell" }
 
 anyhow = { version = "1.0.99" }
 approx = "0.5.1"
+arboard = { version = "3.6.1" }
 bytemuck = { version = "1.13.1", features = ["derive"] }
 cgmath = { version = "0.18.0" }
 cosmic-text = { version = "0.14.2", features = ["swash"] }
@@ -61,6 +66,7 @@ sys-locale = { version = "0.3.2" }
 tokio = { version = "1.36.0", features = ["macros", "sync", "time"] }
 tokio-util = { version = "0.7.16", features = ["io"] }
 tracing = "0.1.40"
+tuple = "0.5.2"
 wgpu = "26.0.1"
 winit = { version = "0.30.1", features = ["rwh_06"] }
 
