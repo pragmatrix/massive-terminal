@@ -121,7 +121,6 @@ impl MassiveTerminal {
         let camera = {
             let fovy: f64 = 45.0;
             let camera_distance = 1.0 / (fovy / 2.0).to_radians().tan();
-            println!("camera dist: {camera_distance}");
             Camera::new((0.0, 0.0, camera_distance), (0.0, 0.0, 0.0))
         };
 
@@ -402,7 +401,6 @@ impl MassiveTerminal {
             .renderer
             .geometry()
             .unproject_to_model_z0(pos_px, &self.panel_matrix.value())?;
-        println!("local hit: {hit:?}");
 
         // Map to cell coordinates
         let geometry = &self.window_state.geometry;

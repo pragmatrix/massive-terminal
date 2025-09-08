@@ -33,7 +33,7 @@ impl Selection {
             },
             _ => {
                 error!(
-                    "Internal erorr: Selection is progressing, but state is {:?}",
+                    "Internal error: Selection is progressing, but state is {:?}",
                     self.state
                 );
                 SelectionState::Unselected
@@ -50,7 +50,7 @@ impl Selection {
             },
             _ => {
                 error!(
-                    "Internal erorr: Selection is ending, but state is {:?}",
+                    "Internal error: Selection is ending, but state is {:?}",
                     self.state
                 );
                 SelectionState::Unselected
@@ -58,7 +58,7 @@ impl Selection {
         }
     }
 
-    // selfalized selection range
+    // Normalized selection range
     pub fn range(&self) -> Option<SelectionRange> {
         if let SelectionState::Selecting { start, end } | SelectionState::Selected { start, end } =
             self.state
@@ -110,7 +110,7 @@ pub enum SelectionState {
     },
 }
 
-/// selfalized selection range.
+/// Normalized selection range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectionRange {
     pub start: SelectionPos,
@@ -135,10 +135,10 @@ impl SelectionRange {
     }
 
     /// Yields a range representing the selected columns for the specified row.
-    /// Not that the range may include usize::max_value() for some rows; this
-    /// indicates that the selection extends to the end of that row.
-    /// Since this struct has no knowledge of line length, it cannot be
-    /// more precise than that.
+    ///
+    /// The range may include usize::max_value() for some rows; this indicates that the selection
+    /// extends to the end of that row. Since this struct has no knowledge of line length, it cannot
+    /// be more precise than that.
     pub fn cols_for_row(&self, row: StableRowIndex, rectangular: bool) -> Range<usize> {
         match () {
             _ if rectangular => {

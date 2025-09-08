@@ -158,7 +158,6 @@ impl TerminalState {
     pub fn selection_begin(&mut self, vis_cell: (usize, usize)) {
         let pos = self.visible_cell_to_selection_pos(vis_cell);
         self.selection.begin(pos);
-        println!("{:?}", self.selection);
     }
 
     pub fn selection_can_progress(&self) -> bool {
@@ -168,12 +167,10 @@ impl TerminalState {
     pub fn selection_progress(&mut self, visible_cell: (usize, usize)) {
         let pos = self.visible_cell_to_selection_pos(visible_cell);
         self.selection.progress(pos);
-        println!("{:?}", self.selection);
     }
 
     pub fn selection_end(&mut self) {
         self.selection.end();
-        println!("{:?}", self.selection);
     }
 
     pub fn visible_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
