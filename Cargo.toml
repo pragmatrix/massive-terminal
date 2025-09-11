@@ -12,10 +12,11 @@ edition.workspace = true
 [dependencies]
 wezterm-term.workspace = true
 
+massive-geometry.workspace = true
+massive-input.workspace = true
 massive-scene.workspace = true
 massive-shapes.workspace = true
 massive-shell.workspace = true
-massive-geometry.workspace = true
 
 anyhow.workspace = true
 arboard.workspace = true
@@ -40,6 +41,7 @@ winit.workspace = true # Ergonomics: Get rid of the winit dependency. Used for b
 
 massive-animation = { path = "massive/animation" }
 massive-geometry = { path = "massive/geometry" }
+massive-input = { path = "massive/input" }
 massive-renderer = { path = "massive/renderer" }
 massive-scene = { path = "massive/scene" }
 massive-shapes = { path = "massive/shapes" }

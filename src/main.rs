@@ -2,6 +2,7 @@ use std::{
     io::{self, ErrorKind},
     ops::Range,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use anyhow::{Result, anyhow};
@@ -12,15 +13,18 @@ use tokio::{pin, select, sync::Notify, task};
 use tracing::info;
 use winit::{
     dpi::PhysicalSize,
-    event::{DeviceId, ElementState, MouseButton, WindowEvent},
+    event::{ElementState, MouseButton, WindowEvent},
+    window::WindowId,
 };
 
-use massive_geometry::{Camera, Color, Identity};
-use massive_scene::{Handle, Location, Matrix, Scene};
-use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use terminal_state::TerminalState;
 use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConfiguration, color};
+
+use massive_geometry::{Camera, Color, Identity};
+use massive_input::{EventManager, ExternalEvent, Movement, MovementChange};
+use massive_scene::{Handle, Location, Matrix, Scene};
+use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
 
 mod geometry;
 mod input;
@@ -35,7 +39,7 @@ pub use panel::*;
 pub use terminal_font::*;
 
 use crate::{
-    geometry::{TerminalGeometry, WindowGeometry},
+    geometry::{PixelPoint, TerminalGeometry, WindowGeometry},
     logical_line::LogicalLine,
     window_state::WindowState,
 };
@@ -71,8 +75,13 @@ struct MassiveTerminal {
     panel: Panel,
     panel_matrix: Handle<Matrix>,
 
+    event_manager: EventManager,
+
     window_state: WindowState,
     terminal_state: TerminalState,
+
+    // User state
+    selecting: Option<Movement>,
 
     #[debug(skip)]
     clipboard: Clipboard,
@@ -184,8 +193,10 @@ impl MassiveTerminal {
             scene,
             panel,
             panel_matrix,
+            event_manager: EventManager::default(),
             window_state: WindowState::new(window_geometry),
             terminal_state: TerminalState::new(last_rendered_seq_no),
+            selecting: None,
             clipboard: Clipboard::new()?,
         })
     }
@@ -217,7 +228,7 @@ impl MassiveTerminal {
             if let Some(event) = &shell_event_opt
                 && let Some(window_event) = event.window_event_for(&self.window)
             {
-                self.process_window_event(window_event)?;
+                self.process_window_event(self.window.id(), window_event)?;
             }
 
             // Performance: We begin an update cycle whenever the terminal advances. This should
@@ -264,25 +275,72 @@ impl MassiveTerminal {
 
     // Robustness: May not end the terminal when this returns an error?
     // Architecture: Think about a general strategy about how to handle recoverable errors.
-    fn process_window_event(&mut self, event: &WindowEvent) -> Result<()> {
-        match event {
-            WindowEvent::ActivationTokenDone { .. } => {}
+    fn process_window_event(
+        &mut self,
+        window_id: WindowId,
+        window_event: &WindowEvent,
+    ) -> Result<()> {
+        let min_movement_distance = self.min_pixel_distance_considered_movement();
+
+        let now = Instant::now();
+        let ev = self.event_manager.event(ExternalEvent::from_window_event(
+            window_id,
+            window_event.clone(),
+            now,
+        ));
+
+        let modifiers = ev.states().keyboard_modifiers();
+
+        // Process selecting user state
+
+        if let Some(selecting) = &mut self.selecting {
+            // Architecture: Can't we transform the MovementChange to be able to transport the
+            // cell.x / y instead of the Vector / Point and then forward it to the terminal_state?
+            // Architecture: If we just ignore the point in Move and Commit, why do we need it?
+            match selecting.track(&ev) {
+                MovementChange::Move(_point) => {
+                    let to = selecting.to();
+                    if let Some(panel_hit) = self.hit_test_panel((to.x, to.y).into())
+                        && let Some(cell_hit) = self.panel_to_cell(panel_hit)
+                    {
+                        assert!(self.terminal_state.selection_can_progress());
+                        self.terminal_state.selection_progress(cell_hit);
+                    }
+                }
+                MovementChange::Commit(_point) => {
+                    self.terminal_state.selection_end();
+                    self.selecting = None;
+                }
+                MovementChange::Cancel => {
+                    self.terminal_state.selection_cancel();
+                    self.selecting = None;
+                }
+                MovementChange::Continue => {}
+            }
+        } else if let Some(movement) = ev.detect_movement(MouseButton::Left, min_movement_distance)
+        {
+            let from = movement.from;
+            if let Some(panel_hit) = self.hit_test_panel((from.x, from.y).into())
+                && let Some(cell_hit) = self.panel_to_cell(panel_hit)
+            {
+                self.terminal_state.selection_begin(cell_hit);
+                self.selecting = Some(movement);
+            }
+        }
+
+        // Process remaining events
+
+        match window_event {
             WindowEvent::Resized(physical_size) => {
                 self.resize((*physical_size).into())?;
             }
-            WindowEvent::Moved { .. } => {}
-            WindowEvent::CloseRequested => {}
-            WindowEvent::Destroyed => {}
-            WindowEvent::DroppedFile(_) => {}
-            WindowEvent::HoveredFile(_) => {}
-            WindowEvent::HoveredFileCancelled => {}
             WindowEvent::Focused(focused) => {
+                // Architecture: Should we track the focused state of the window in the EventAggregator?
                 self.window_state.focused = *focused;
                 self.terminal.lock().unwrap().focus_changed(*focused);
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let Some((key, modifiers)) =
-                    input::convert_key_event(event, self.window_state.keyboard_modifiers.state())
+                if let Some((key, modifiers)) = input::termwiz::convert_key_event(event, modifiers)
                 {
                     match event.state {
                         ElementState::Pressed => match key {
@@ -302,49 +360,7 @@ impl MassiveTerminal {
                     }
                 }
             }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.window_state.keyboard_modifiers = *modifiers;
-            }
-            WindowEvent::Ime(_) => {}
-            WindowEvent::CursorMoved {
-                device_id,
-                position,
-            } => {
-                self.window_state.cursor_moved(*device_id, *position);
-                self.selection_progress(*device_id);
-            }
-            WindowEvent::CursorEntered { device_id } => {
-                self.window_state.cursor_entered(*device_id);
-            }
-            WindowEvent::CursorLeft { device_id } => {
-                self.window_state.cursor_left(*device_id);
-            }
-            WindowEvent::MouseWheel { .. } => {}
-            WindowEvent::MouseInput {
-                button,
-                state,
-                device_id,
-            } => {
-                if *button == MouseButton::Left {
-                    match state {
-                        ElementState::Pressed => {
-                            self.selection_begin(*device_id);
-                        }
-                        ElementState::Released => self.selection_end(),
-                    }
-                }
-            }
-            WindowEvent::PinchGesture { .. } => {}
-            WindowEvent::PanGesture { .. } => {}
-            WindowEvent::DoubleTapGesture { .. } => {}
-            WindowEvent::RotationGesture { .. } => {}
-            WindowEvent::TouchpadPressure { .. } => {}
-            WindowEvent::AxisMotion { .. } => {}
-            WindowEvent::Touch(_) => {}
-            WindowEvent::ScaleFactorChanged { .. } => {}
-            WindowEvent::ThemeChanged(_) => {}
-            WindowEvent::Occluded(_) => {}
-            WindowEvent::RedrawRequested => {}
+            _ => {}
         }
         Ok(())
     }
@@ -374,47 +390,32 @@ impl MassiveTerminal {
         Ok(())
     }
 
-    fn selection_begin(&mut self, device: DeviceId) -> Option<()> {
-        let pos = self.window_state.cursor_state(device).pos_px?;
-        let cells_hit = self.hit_test(pos)?;
-        self.terminal_state.selection_begin(cells_hit);
-        ().into()
-    }
-
-    fn selection_progress(&mut self, device: DeviceId) -> Option<()> {
-        if !self.terminal_state.selection_can_progress() {
-            return None;
-        }
-        let pos = self.window_state.cursor_state(device).pos_px?;
-        let cells_hit = self.hit_test(pos)?;
-        self.terminal_state.selection_progress(cells_hit);
-        ().into()
-    }
-
-    fn selection_end(&mut self) {
-        self.terminal_state.selection_end();
-    }
-
-    fn hit_test(&mut self, pos_px: (f64, f64)) -> Option<(usize, usize)> {
-        // Prepare combined matrix once.
+    fn hit_test_panel(&mut self, pos_px: PixelPoint) -> Option<PixelPoint> {
         let hit = self
             .renderer
             .geometry()
-            .unproject_to_model_z0(pos_px, &self.panel_matrix.value())?;
+            .unproject_to_model_z0(pos_px.into(), &self.panel_matrix.value())?;
 
-        // Map to cell coordinates
+        Some((hit.x, hit.y).into())
+    }
+
+    /// The cell for a particular pixel coordinate in the pixel space of the panel.
+    fn panel_to_cell(&self, panel_px: PixelPoint) -> Option<(usize, usize)> {
+        let (x, y) = panel_px.into();
+
         let geometry = &self.window_state.geometry;
+        let (panel_px_w, panel_px_h) = geometry.inner_size_px();
+        let (panel_px_w, panel_px_h) = (panel_px_w as f64, panel_px_h as f64);
+
+        if x < 0.0 || y < 0.0 || x >= panel_px_w || y >= panel_px_h {
+            return None;
+        }
+
         let (cell_w, cell_h) = {
             let (cw, ch) = geometry.terminal.cell_size_px; // field access
             (cw as f64, ch as f64)
         };
-        let (panel_px_w, panel_px_h) = geometry.inner_size_px();
-        let (panel_px_w, panel_px_h) = (panel_px_w as f64, panel_px_h as f64);
 
-        let (x, y) = (hit.x, hit.y);
-        if x < 0.0 || y < 0.0 || x >= panel_px_w || y >= panel_px_h {
-            return None;
-        }
         if cell_w <= 0.0 || cell_h <= 0.0 {
             return None;
         }
@@ -422,6 +423,12 @@ impl MassiveTerminal {
         let col = (x / cell_w).floor() as usize;
         let row = (y / cell_h).floor() as usize;
         Some((col, row))
+    }
+
+    fn min_pixel_distance_considered_movement(&self) -> f64 {
+        const LOGICAL_POINTS_CONSIDERED_MOVEMENT: f64 = 5.0;
+        LOGICAL_POINTS_CONSIDERED_MOVEMENT
+            * self.context.primary_monitor_scale_factor().unwrap_or(1.0)
     }
 }
 

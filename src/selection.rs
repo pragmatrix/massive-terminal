@@ -54,6 +54,10 @@ impl Selection {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.state = SelectionState::Unselected;
+    }
+
     // Normalized selection range
     pub fn range(&self) -> Option<NormalizedSelectionRange> {
         match self.state {

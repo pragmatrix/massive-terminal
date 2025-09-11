@@ -2212,6 +2212,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "massive-input"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "euclid",
+ "itertools 0.14.0",
+ "massive-geometry",
+ "winit",
+]
+
+[[package]]
 name = "massive-renderer"
 version = "0.1.0"
 dependencies = [
@@ -2296,6 +2308,7 @@ dependencies = [
  "euclid",
  "futures",
  "massive-geometry",
+ "massive-input",
  "massive-scene",
  "massive-shapes",
  "massive-shell",
