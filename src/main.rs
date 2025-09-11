@@ -22,7 +22,7 @@ use terminal_state::TerminalState;
 use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConfiguration, color};
 
 use massive_geometry::{Camera, Color, Identity};
-use massive_input::{EventManager, ExternalEvent, Movement, MovementChange};
+use massive_input::{EventManager, ExternalEvent, Movement};
 use massive_scene::{Handle, Location, Matrix, Scene};
 use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
 
@@ -294,28 +294,17 @@ impl MassiveTerminal {
         // Process selecting user state
 
         if let Some(selecting) = &mut self.selecting {
-            // Architecture: Can't we transform the MovementChange to be able to transport the
-            // cell.x / y instead of the Vector / Point and then forward it to the terminal_state?
-            // Architecture: If we just ignore the point in Move and Commit, why do we need it?
-            match selecting.track(&ev) {
-                MovementChange::Move(_point) => {
-                    let to = selecting.to();
-                    if let Some(panel_hit) = self.hit_test_panel((to.x, to.y).into())
-                        && let Some(cell_hit) = self.panel_to_cell(panel_hit)
-                    {
-                        assert!(self.terminal_state.selection_can_progress());
-                        self.terminal_state.selection_progress(cell_hit);
-                    }
-                }
-                MovementChange::Commit(_point) => {
-                    self.terminal_state.selection_end();
+            if let Some(progress) = selecting.track_to(&ev)
+                && let Some(progress) = progress.try_map(|to| {
+                    let panel_hit = self.hit_test_panel((to.x, to.y).into())?;
+                    self.panel_to_cell(panel_hit)
+                })
+            {
+                assert!(self.terminal_state.selection_can_progress());
+                self.terminal_state.selection_progress(progress);
+                if progress.ends() {
                     self.selecting = None;
                 }
-                MovementChange::Cancel => {
-                    self.terminal_state.selection_cancel();
-                    self.selecting = None;
-                }
-                MovementChange::Continue => {}
             }
         } else if let Some(movement) = ev.detect_movement(MouseButton::Left, min_movement_distance)
         {

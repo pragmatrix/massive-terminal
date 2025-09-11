@@ -2219,6 +2219,7 @@ dependencies = [
  "derive_more",
  "euclid",
  "itertools 0.14.0",
+ "log",
  "massive-geometry",
  "winit",
 ]

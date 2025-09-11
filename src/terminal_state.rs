@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use massive_input::Progress;
 
 use crate::{
     Panel, WindowState,
@@ -164,17 +165,15 @@ impl TerminalState {
         self.selection.can_progress()
     }
 
-    pub fn selection_progress(&mut self, visible_cell: (usize, usize)) {
-        let pos = self.visible_cell_to_selection_pos(visible_cell);
-        self.selection.progress(pos);
-    }
-
-    pub fn selection_end(&mut self) {
-        self.selection.end();
-    }
-
-    pub fn selection_cancel(&mut self) {
-        self.selection.reset();
+    pub fn selection_progress(&mut self, progress: Progress<(usize, usize)>) {
+        match progress {
+            Progress::Proceed(cell_hit) => {
+                let pos = self.visible_cell_to_selection_pos(cell_hit);
+                self.selection.progress(pos);
+            }
+            Progress::Commit => self.selection.end(),
+            Progress::Cancel => self.selection.reset(),
+        }
     }
 
     pub fn visible_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
