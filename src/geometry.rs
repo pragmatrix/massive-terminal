@@ -7,6 +7,11 @@ pub struct CellUnit;
 pub type CellRect = euclid::Rect<usize, CellUnit>;
 pub type CellPoint = euclid::Point2D<usize, CellUnit>;
 
+pub struct PixelUnit;
+
+/// A point on a pixel coordinate system expressed in floats.
+pub type PixelPoint = euclid::Point2D<f64, PixelUnit>;
+
 #[derive(Debug)]
 pub struct WindowGeometry {
     _scale_factor: f64,

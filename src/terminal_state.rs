@@ -173,6 +173,10 @@ impl TerminalState {
         self.selection.end();
     }
 
+    pub fn selection_cancel(&mut self) {
+        self.selection.reset();
+    }
+
     pub fn visible_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
         // Bug: What about secondary screen?
         SelectionPos::new(
