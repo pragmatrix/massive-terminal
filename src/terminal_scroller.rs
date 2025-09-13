@@ -48,8 +48,11 @@ impl TerminalScroller {
 
     /// Set a new velocity and start scrolling if not currently so.
     pub fn set_velocity(&mut self, pixels_per_second: f64) {
-        self.velocity
-            .animate_to(pixels_per_second, self.phase_in_duration, Interpolation::CubicOut);
+        self.velocity.animate_to(
+            pixels_per_second,
+            self.phase_in_duration,
+            Interpolation::CubicOut,
+        );
         self.state = ScrollAnimationState::PhasingInOrScrolling;
     }
 

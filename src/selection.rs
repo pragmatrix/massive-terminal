@@ -1,6 +1,7 @@
-use derive_more::Deref;
 use std::{cmp::Ordering, ops::Range};
-use tracing::error;
+
+use derive_more::Deref;
+use log::error;
 use wezterm_term::StableRowIndex;
 
 use crate::window_geometry::CellPoint;

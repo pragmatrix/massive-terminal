@@ -9,10 +9,8 @@ use anyhow::{Result, anyhow};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use massive_renderer::RenderGeometry;
+use log::info;
 use tokio::{pin, select, sync::Notify, task};
-use tracing::info;
-use tuple::Map;
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton, WindowEvent},
@@ -23,7 +21,7 @@ use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use terminal_state::TerminalState;
 use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConfiguration, color};
 
-use massive_geometry::{Camera, Color, Identity, Point};
+use massive_geometry::{Camera, Color, Identity};
 use massive_input::{EventManager, ExternalEvent, Movement};
 use massive_scene::{Handle, Location, Matrix, Scene};
 use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellEvent, ShellWindow, shell};
@@ -43,10 +41,8 @@ pub use panel::*;
 pub use terminal_font::*;
 
 use crate::{
-    logical_line::LogicalLine,
-    terminal_geometry::TerminalGeometry,
-    terminal_scroller::TerminalScroller,
-    window_geometry::{PixelPoint, WindowGeometry},
+    logical_line::LogicalLine, terminal_geometry::TerminalGeometry,
+    terminal_scroller::TerminalScroller, window_geometry::WindowGeometry,
     window_state::WindowState,
 };
 
@@ -187,6 +183,7 @@ impl MassiveTerminal {
         let panel = Panel::new(
             font_system,
             terminal_font,
+            context.timeline(0.0),
             window_geometry.terminal_geometry.rows(),
             panel_location,
             &scene,
@@ -237,24 +234,35 @@ impl MassiveTerminal {
                 }
             };
 
-            if let Some(event) = &shell_event_opt {
-                if matches!(event, ShellEvent::ApplyAnimations) {
-                    self.terminal_scroller.proceed();
-                }
-
-                if let Some(window_event) = event.window_event_for(&self.window) {
-                    self.process_window_event(self.window.id(), window_event)?;
-                }
+            // We have to process window events before going into the update cycle for now because
+            // of the borrow checker.
+            //
+            // Detail: Animations starting here _are_ considered, but not updates.
+            if let Some(shell_event) = &shell_event_opt
+                && let Some(window_event) = shell_event.window_event_for(&self.window)
+            {
+                self.process_window_event(self.window.id(), window_event)?;
             }
 
-            // Performance: We begin an update cycle whenever the terminal advances. This should
-            // probably be done asynchronously, deferred, etc. But note that the renderer is also
-            // running asynchronously at the end of the update cycle.
+            // Performance: We begin an update cycle whenever the terminal advances, too. This
+            // should probably be done asynchronously, deferred, etc. But note that the renderer is
+            // also running asynchronously at the end of the update cycle.
             let _cycle = self.context.begin_update_cycle(
                 &self.scene,
                 &mut self.renderer,
                 shell_event_opt.as_ref(),
             )?;
+
+            // Architecture: We need to enforce running animations _inside_ the update cycle
+            // somehow. Otherwise this can lead to confusing bugs, for example if the following code
+            // does run before begin_update_cycle().
+            //
+            // Idea: Make shell_event opaque and allow checking for animations update in UpdateCycle
+            // that is returned from begin_update_cycle()?
+            if matches!(shell_event_opt, Some(ShellEvent::ApplyAnimations)) {
+                self.terminal_scroller.proceed();
+                self.panel.apply_animations();
+            }
 
             {
                 // Update lines & cursor

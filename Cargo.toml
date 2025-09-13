@@ -27,13 +27,14 @@ cosmic-text.workspace = true
 derive_more.workspace = true
 euclid.workspace = true
 futures.workspace = true
+log.workspace = true
 portable-pty.workspace = true
 rangeset.workspace = true
 sys-locale.workspace = true
 termwiz.workspace = true
 tokio-util.workspace = true
 tokio.workspace = true
-tracing.workspace = true
+# tracing.workspace = true
 tuple.workspace = true
 winit.workspace = true # Ergonomics: Get rid of the winit dependency. Used for because of LogicalSize.
 

@@ -3,6 +3,7 @@ use std::{
     collections::VecDeque,
     ops::Range,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::{Result, bail};
@@ -10,6 +11,8 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
+use log::info;
+use massive_animation::{Interpolation, Timeline};
 use tuple::Map;
 
 use termwiz::{
@@ -30,6 +33,8 @@ use crate::{
     window_geometry::CellRect,
 };
 
+const SCROLL_DURATION: Duration = Duration::from_millis(100);
+
 /// Panel is the (massive) representation of the terminal.
 ///
 /// - It always contains a single [`Visual`] for each line. Even if this line is
@@ -48,9 +53,13 @@ pub struct Panel {
     /// This effectively moves all lines _only_ up.
     scroll_matrix: Handle<Matrix>,
     scroll_location: Handle<Location>,
-    /// The number of lines with which _all_ lines are transformed upwards. If the view scrolls up
-    /// and a new line comes in on the bottom, this value increases.
-    scroll_offset: i64,
+
+    /// The number of pixels with which _all_ lines are transformed upwards.
+    ///
+    /// When the view scrolls up and a new line comes in on the bottom, this value increases.
+    ///
+    /// Never negative.
+    scroll_offset_px: Timeline<f64>,
 
     /// The visible lines. This contains _only_ the lines currently visible in the terminal.
     ///
@@ -71,6 +80,7 @@ impl Panel {
     pub fn new(
         font_system: Arc<Mutex<FontSystem>>,
         font: TerminalFont,
+        scroll_offset_px: Timeline<f64>,
         rows: usize,
         location: Handle<Location>,
         scene: &Scene,
@@ -95,7 +105,7 @@ impl Panel {
             font_system,
             font,
             color_palette: ColorPalette::default(),
-            scroll_offset: 0,
+            scroll_offset_px,
             scroll_matrix,
             scroll_location,
             visible_lines: line_visuals,
@@ -110,23 +120,37 @@ impl Panel {
 impl Panel {
     /// Scroll all lines by delta lines. Positive: moves all lines up, negative moves all lines down.
     /// This makes sure that empty lines are generated.
-    pub fn scroll(&mut self, delta: isize) {
-        match delta {
-            _ if delta < 0 => {
-                self.move_lines_down(-delta as usize);
+    pub fn scroll(&mut self, delta_lines: isize) {
+        match delta_lines {
+            _ if delta_lines < 0 => {
+                self.move_lines_down(-delta_lines as usize);
             }
-            _ if delta > 0 => {
-                self.move_lines_up(delta as usize);
+            _ if delta_lines > 0 => {
+                self.move_lines_up(delta_lines as usize);
             }
             _ => {
                 return;
             }
         }
 
-        self.scroll_offset += delta as i64;
-        let new_y = -self.scroll_offset * self.font.cell_size_px().1 as i64;
+        let current_scroll_offset = self.scroll_offset_px.final_value();
+        self.scroll_offset_px.animate_to(
+            current_scroll_offset.round()
+                + (self.font.cell_size_px().1 as i64 * delta_lines as i64) as f64,
+            SCROLL_DURATION,
+            Interpolation::CubicOut,
+        );
+    }
+
+    /// Update currently running animations.
+    pub fn apply_animations(&mut self) {
+        if !self.scroll_offset_px.is_animating() {
+            return;
+        }
+
+        let scroll_offset_px = self.scroll_offset_px.value();
         self.scroll_matrix
-            .update(Matrix::from_translation((0., new_y as f64, 0.).into()));
+            .update(Matrix::from_translation((0., -scroll_offset_px, 0.).into()));
     }
 
     fn move_lines_up(&mut self, lines: usize) {
@@ -182,7 +206,11 @@ impl Panel {
     ) -> Result<()> {
         for (i, line) in lines.iter().enumerate() {
             let line_index = visual_line_index_top + i;
-            let top = (self.scroll_offset + line_index as i64) * self.font.cell_size_px().1 as i64;
+            // Detail: This may currently be animating, so take the final value (and assume that the
+            // final value is always on pixel boundaries ... and because of precision errors we
+            // round()).
+            let top = self.scroll_offset_px.final_value().round() as i64
+                + (line_index as i64 * self.font.cell_size_px().1 as i64);
             let shapes = {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
@@ -421,7 +449,8 @@ impl Panel {
         // pos is screen relative, but we do attach the cursor visual to the scroll matrix, so have
         // to add scroll offset here.
         // Precision: This may get very large, so u64.
-        let top = cell_size.1 as u64 * (pos.y as u64 + self.scroll_offset as u64);
+        let top = self.scroll_offset_px.final_value().round() as u64
+            + (cell_size.1 as u64 * pos.y as u64);
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
         // position / thickness, not from the cell size.
@@ -470,9 +499,13 @@ impl Panel {
                 let cell_size = terminal_geometry.cell_size_px.map(f64::from);
 
                 let rects_final = rects_stable.iter().map(|r| {
-                    r.to_f64()
-                        .scale(cell_size.0, cell_size.1)
-                        .translate((0., self.scroll_offset as f64 * cell_size.1).into())
+                    r.to_f64().scale(cell_size.0, cell_size.1).translate(
+                        (
+                            0.,
+                            self.scroll_offset_px.final_value().round() * cell_size.1,
+                        )
+                            .into(),
+                    )
                 });
 
                 let selection_color = color::from_srgba(self.color_palette.selection_bg);
