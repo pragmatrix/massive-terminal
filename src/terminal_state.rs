@@ -99,7 +99,6 @@ impl TerminalState {
                 screen.with_phys_lines(phys_range, |lines| {
                     // This is guaranteed to be called only once for all lines.
                     self.line_buf.extend(lines.iter().copied().cloned());
-                    // r = panel.update_lines(scene, visible_range_start as usize, lines);
                 });
             }
         }
