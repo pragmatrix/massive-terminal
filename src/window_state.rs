@@ -1,6 +1,6 @@
 use derive_more::Deref;
 
-use crate::geometry::WindowGeometry;
+use crate::window_geometry::WindowGeometry;
 
 #[derive(Debug, Deref)]
 pub struct WindowState {

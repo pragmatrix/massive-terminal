@@ -3,7 +3,7 @@ use std::{cmp::Ordering, ops::Range};
 use tracing::error;
 use wezterm_term::StableRowIndex;
 
-use crate::geometry::CellPoint;
+use crate::window_geometry::CellPoint;
 
 #[derive(Debug, Default)]
 pub struct Selection {

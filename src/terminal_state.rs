@@ -132,7 +132,11 @@ impl TerminalState {
 
         Self::update_cursor(cursor_pos, panel, window_state.focused, scene);
 
-        panel.update_selection(scene, self.selection.range(), &window_state.terminal);
+        panel.update_selection(
+            scene,
+            self.selection.range(),
+            &window_state.terminal_geometry,
+        );
 
         // Commit
 

@@ -25,11 +25,12 @@ use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, Tex
 
 use crate::{
     TerminalFont,
-    geometry::{CellRect, TerminalGeometry},
     selection::{NormalizedSelectionRange, SelectionRange},
+    terminal_geometry::TerminalGeometry,
+    window_geometry::CellRect,
 };
 
-/// Panel is the representation of the terminal.
+/// Panel is the (massive) representation of the terminal.
 ///
 /// - It always contains a single [`Visual`] for each line. Even if this line is
 ///   currently not rendered.

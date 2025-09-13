@@ -1,57 +1,7 @@
 use portable_pty::PtySize;
+use tuple::Map;
 
-// euclid definitions
-
-pub struct CellUnit;
-
-pub type CellRect = euclid::Rect<usize, CellUnit>;
-pub type CellPoint = euclid::Point2D<usize, CellUnit>;
-
-pub struct PixelUnit;
-
-/// A point on a pixel coordinate system expressed in floats.
-pub type PixelPoint = euclid::Point2D<f64, PixelUnit>;
-
-#[derive(Debug)]
-pub struct WindowGeometry {
-    _scale_factor: f64,
-    inner_size_px: (u32, u32),
-
-    /// Padding around the terminal in physical pixels.
-    padding_px: u32,
-
-    // Architecture: Even thogh the WindowGeometry is built from the terminal's geometry, this does not belong here.
-    pub terminal: TerminalGeometry,
-}
-
-impl WindowGeometry {
-    pub fn new(scale_factor: f64, padding_px: u32, terminal: TerminalGeometry) -> Self {
-        let (width, height) = terminal.size_px();
-        let padding_2 = padding_px * 2;
-        let inner_size_px = (width + padding_2, height + padding_2);
-
-        Self {
-            _scale_factor: scale_factor,
-            inner_size_px,
-            padding_px,
-            terminal,
-        }
-    }
-
-    pub fn inner_size_px(&self) -> (u32, u32) {
-        self.inner_size_px
-    }
-
-    pub fn resize(&mut self, new_inner_size_px: (u32, u32)) {
-        let padding_2 = self.padding_px * 2;
-        let terminal_inner_size = (
-            new_inner_size_px.0.saturating_sub(padding_2),
-            new_inner_size_px.1.saturating_sub(padding_2),
-        );
-        self.terminal.resize(terminal_inner_size);
-        self.inner_size_px = new_inner_size_px;
-    }
-}
+use crate::window_geometry::PixelPoint;
 
 #[derive(Debug)]
 pub struct TerminalGeometry {
@@ -114,5 +64,41 @@ impl TerminalGeometry {
             // Production: Set dpi
             ..wezterm_term::TerminalSize::default()
         }
+    }
+
+    /// The cell for a particular pixel coordinate in the pixel space of the panel.
+    pub fn panel_to_cell(&self, panel_px: PixelPoint) -> Option<(usize, usize)> {
+        let (x, y) = panel_px.into();
+
+        let panel_size = self.size_px().map(|c| c as f64);
+
+        // Abstraction: Use Rect here
+        if x < 0.0 || y < 0.0 || x >= panel_size.0 || y >= panel_size.1 {
+            return None;
+        }
+
+        let cell_size_px = self.cell_size_px.map(|c| c as f64);
+
+        let col = (x / cell_size_px.0).floor() as usize;
+        let row = (y / cell_size_px.1).floor() as usize;
+        Some((col, row))
+    }
+
+    /// Decide if scrolling is needed and how many pixels the hit position lies away from.
+    ///
+    /// Negative values scroll up, positives, scroll down.
+    pub fn scroll_distance(&self, panel_hit: PixelPoint) -> Option<f64> {
+        let hit_y = panel_hit.y;
+
+        if hit_y < 0.0 {
+            return Some(panel_hit.y);
+        }
+
+        let height = self.size_px().1 as f64;
+        if hit_y > height {
+            return Some(hit_y - height);
+        }
+
+        None
     }
 }
