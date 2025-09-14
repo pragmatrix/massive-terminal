@@ -6,12 +6,11 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use log::info;
 use massive_animation::{Interpolation, Timeline};
 use tuple::Map;
 
@@ -20,17 +19,17 @@ use termwiz::{
     color::ColorAttribute,
     surface::{CursorShape, CursorVisibility},
 };
-use wezterm_term::{CursorPosition, Intensity, Line, color::ColorPalette};
+use wezterm_term::{color::ColorPalette, CursorPosition, Intensity, Line};
 
 use massive_geometry::{Identity, Point, Rect, Size};
 use massive_scene::{Handle, Location, Matrix, Scene, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 
 use crate::{
-    TerminalFont,
     selection::{NormalizedSelectionRange, SelectionRange},
     terminal_geometry::TerminalGeometry,
     window_geometry::CellRect,
+    TerminalFont,
 };
 
 const SCROLL_DURATION: Duration = Duration::from_millis(100);
@@ -395,10 +394,6 @@ fn cluster_background(
 
     Some(massive_shapes::Rect::new(Rect::new(lt, size), background).into())
 }
-
-// Background Shapes
-
-impl Panel {}
 
 // Cursor
 
