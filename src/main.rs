@@ -259,9 +259,17 @@ impl MassiveTerminal {
             // Idea: Make shell_event opaque and allow checking for animations update in UpdateCycle
             // that is returned from begin_update_cycle()?
             if matches!(shell_event_opt, Some(ShellEvent::ApplyAnimations)) {
+                info!("Applying animations");
                 self.terminal_scroller.proceed();
-                self.panel.apply_animations();
             }
+
+            // Currently we need always apply panel animations, otherwise the scroll matrix is not
+            // in sync with the updated lines which results in flickering while scrolling (i.e.
+            // lines disappearing too early when scrolling up).
+            //
+            // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
+            // concept.
+            self.panel.apply_animations();
 
             {
                 // Update lines & cursor

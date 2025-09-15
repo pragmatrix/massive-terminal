@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use log::info;
 use massive_input::Progress;
 
 use crate::{
@@ -62,13 +63,13 @@ impl TerminalState {
 
         // We need to scroll first, so that the visible range is up to date (even though this
         // should not make a difference when the panel is currently animating).
-        let stable_top = screen.visible_row_to_stable_row(0);
-        if !alt_screen_active && stable_top != self.current_stable_top_primary {
-            let scroll_amount = stable_top - self.current_stable_top_primary;
+        let stable_top_in_screen_view = screen.visible_row_to_stable_row(0);
+        if !alt_screen_active && stable_top_in_screen_view != self.current_stable_top_primary {
+            let scroll_amount = stable_top_in_screen_view - self.current_stable_top_primary;
             if scroll_amount != 0 {
                 panel.scroll(scroll_amount);
             }
-            self.current_stable_top_primary = stable_top;
+            self.current_stable_top_primary = stable_top_in_screen_view;
         }
 
         // Get the stable view range from the panel. It can't be computed here, because of the

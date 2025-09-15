@@ -11,7 +11,7 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use log::info;
+use log::{info, trace};
 use massive_animation::{Interpolation, Timeline};
 use rangeset::RangeSet;
 use tuple::Map;
@@ -146,12 +146,15 @@ impl Panel {
 
     /// Update currently running animations.
     pub fn apply_animations(&mut self) {
-        if !self.scroll_offset_px.is_animating() {
-            return;
-        }
+        // Detail: Even if the timeline is not anymore animating, we might not have retrieved and
+        // update the latest value yet.
 
         // Round to the nearest pixel, otherwise animated frames would not be pixel perfect.
         let scroll_offset_px = self.scroll_offset_px.value().round();
+        trace!(
+            "Updating scroll offset: {scroll_offset_px} (apx line: {})",
+            scroll_offset_px / self.line_height_px() as f64
+        );
         self.scroll_matrix
             .update(Matrix::from_translation((0., -scroll_offset_px, 0.).into()));
     }
