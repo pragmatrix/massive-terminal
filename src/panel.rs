@@ -11,6 +11,7 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
+use log::info;
 use massive_animation::{Interpolation, Timeline};
 use rangeset::RangeSet;
 use tuple::Map;
@@ -149,7 +150,8 @@ impl Panel {
             return;
         }
 
-        let scroll_offset_px = self.scroll_offset_px.value();
+        // Round to the nearest pixel, otherwise animated frames would not be pixel perfect.
+        let scroll_offset_px = self.scroll_offset_px.value().round();
         self.scroll_matrix
             .update(Matrix::from_translation((0., -scroll_offset_px, 0.).into()));
     }
@@ -262,12 +264,11 @@ impl Panel {
             bail!("Internal error: Updated lines {update_range:?} is not inside {lines_range:?}");
         }
 
-        // Detail: This may currently be animating, so take the final scroll offset value
-        let scroll_offset_px = self.scroll_offset_px();
         let line_height_px = self.line_height_px();
 
         for (i, line) in lines.iter().enumerate() {
-            let top = scroll_offset_px + (first_line_stable_index as i64 * line_height_px);
+            // Place shapes at their stable (non-animated) vertical position.
+            let top = (first_line_stable_index + i as isize) as i64 * line_height_px;
             let shapes = {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
@@ -324,10 +325,6 @@ impl Panel {
         }
 
         Ok(shapes)
-    }
-
-    fn rows(&self) -> usize {
-        self.lines.len()
     }
 }
 
