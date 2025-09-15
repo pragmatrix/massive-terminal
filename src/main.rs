@@ -184,7 +184,6 @@ impl MassiveTerminal {
             font_system,
             terminal_font,
             context.timeline(0.0),
-            window_geometry.terminal_geometry.rows(),
             panel_location,
             &scene,
         );
@@ -432,8 +431,6 @@ impl MassiveTerminal {
             .lock()
             .unwrap()
             .resize(terminal.wezterm_terminal_size());
-
-        self.panel.resize(terminal.rows(), &self.scene);
 
         Ok(())
     }

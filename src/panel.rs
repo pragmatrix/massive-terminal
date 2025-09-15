@@ -1,17 +1,18 @@
 use std::{
-    cmp::Ordering,
     collections::VecDeque,
+    iter,
     ops::Range,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
 use massive_animation::{Interpolation, Timeline};
+use rangeset::RangeSet;
 use tuple::Map;
 
 use termwiz::{
@@ -19,17 +20,17 @@ use termwiz::{
     color::ColorAttribute,
     surface::{CursorShape, CursorVisibility},
 };
-use wezterm_term::{color::ColorPalette, CursorPosition, Intensity, Line};
+use wezterm_term::{CursorPosition, Intensity, Line, StableRowIndex, color::ColorPalette};
 
 use massive_geometry::{Identity, Point, Rect, Size};
 use massive_scene::{Handle, Location, Matrix, Scene, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 
 use crate::{
+    TerminalFont,
     selection::{NormalizedSelectionRange, SelectionRange},
     terminal_geometry::TerminalGeometry,
     window_geometry::CellRect,
-    TerminalFont,
 };
 
 const SCROLL_DURATION: Duration = Duration::from_millis(100);
@@ -53,19 +54,25 @@ pub struct Panel {
     scroll_matrix: Handle<Matrix>,
     scroll_location: Handle<Location>,
 
+    /// Positive scroll offset of the screen.
+    screen_scroll_offset: StableRowIndex,
+
     /// The number of pixels with which _all_ lines are transformed upwards.
     ///
     /// When the view scrolls up and a new line comes in on the bottom, this value increases.
     ///
-    /// Never negative.
+    /// Never negative
     scroll_offset_px: Timeline<f64>,
+
+    /// The first line's stable index in lines.
+    first_line_stable_index: StableRowIndex,
 
     /// The visible lines. This contains _only_ the lines currently visible in the terminal.
     ///
     /// No lines for the scrollback. And if we are _inside_ the scrollback buffer, no lines below.
     ///
     /// VecDeque because we want to optimize them for scrolling.
-    visible_lines: VecDeque<Handle<Visual>>,
+    lines: VecDeque<Handle<Visual>>,
     cursor: Option<Handle<Visual>>,
     selection: Option<Handle<Visual>>,
 }
@@ -80,7 +87,6 @@ impl Panel {
         font_system: Arc<Mutex<FontSystem>>,
         font: TerminalFont,
         scroll_offset_px: Timeline<f64>,
-        rows: usize,
         location: Handle<Location>,
         scene: &Scene,
     ) -> Self {
@@ -91,23 +97,16 @@ impl Panel {
             matrix: scroll_matrix.clone(),
         });
 
-        let line_visuals = (0..rows)
-            .map(|_| {
-                scene.stage(Visual {
-                    location: scroll_location.clone(),
-                    shapes: [].into(),
-                })
-            })
-            .collect();
-
         Self {
             font_system,
             font,
             color_palette: ColorPalette::default(),
+            screen_scroll_offset: 0,
             scroll_offset_px,
             scroll_matrix,
             scroll_location,
-            visible_lines: line_visuals,
+            first_line_stable_index: 0,
+            lines: VecDeque::new(),
             cursor: None,
             selection: None,
         }
@@ -117,28 +116,31 @@ impl Panel {
 // Lines
 
 impl Panel {
-    /// Scroll all lines by delta lines. Positive: moves all lines up, negative moves all lines down.
-    /// This makes sure that empty lines are generated.
+    /// Scroll all lines by delta lines.
+    ///
+    /// Positive: moves all lines up, negative moves all lines down. This makes sure that empty
+    /// lines are generated.
     pub fn scroll(&mut self, delta_lines: isize) {
-        match delta_lines {
-            _ if delta_lines < 0 => {
-                self.move_lines_down(-delta_lines as usize);
-            }
-            _ if delta_lines > 0 => {
-                self.move_lines_up(delta_lines as usize);
-            }
-            _ => {
-                return;
-            }
+        if delta_lines == 0 {
+            return;
         }
 
-        let current_scroll_offset = self.scroll_offset_px.final_value();
+        self.screen_scroll_offset += delta_lines;
+        assert!(self.screen_scroll_offset >= 0);
+
         self.scroll_offset_px.animate_to(
-            current_scroll_offset.round()
-                + (self.font.cell_size_px().1 as i64 * delta_lines as i64) as f64,
+            self.scroll_offset_px() as f64,
             SCROLL_DURATION,
             Interpolation::CubicOut,
         );
+    }
+
+    fn scroll_offset_px(&self) -> i64 {
+        self.screen_scroll_offset as i64 * self.line_height_px()
+    }
+
+    fn line_height_px(&self) -> i64 {
+        self.font.cell_size_px().1 as i64
     }
 
     /// Update currently running animations.
@@ -152,71 +154,131 @@ impl Panel {
             .update(Matrix::from_translation((0., -scroll_offset_px, 0.).into()));
     }
 
-    fn move_lines_up(&mut self, lines: usize) {
-        if lines < self.rows() {
-            self.visible_lines.rotate_left(lines);
-        }
-        let first_to_reset = self.rows().saturating_sub(lines);
-        self.reset_lines(first_to_reset..self.rows());
+    /// Return the stable range of all the lines we need to update for the stable_range given in the
+    /// screen taking the current animation into account.
+    pub fn view_range(&self, rows: usize) -> Range<StableRowIndex> {
+        assert!(rows >= 1);
+
+        // First pixel visible inside the screen viewed.
+        let line_height_px = self.font.cell_size_px().1 as i64;
+        let animated_scroll_offset_px = self.scroll_offset_px.value();
+
+        let topmost_pixel_line_visible = animated_scroll_offset_px.trunc() as i64;
+        // -1 because we want to hit the line the pixel is on and don't render more than row cells
+        // if animations are done.
+        let bottom_pixel_line_visible =
+            (topmost_pixel_line_visible + line_height_px * rows as i64) - 1;
+
+        let topmost_stable_render_line = topmost_pixel_line_visible / line_height_px;
+        let bottom_stable_render_line = bottom_pixel_line_visible / line_height_px;
+        assert!(bottom_stable_render_line >= topmost_stable_render_line);
+
+        topmost_stable_render_line as isize..(bottom_stable_render_line + 1) as isize
     }
 
-    fn move_lines_down(&mut self, lines: usize) {
-        if lines < self.rows() {
-            self.visible_lines.rotate_right(lines);
+    /// This is the first step before lines can be updated. Reset the view range.
+    ///
+    /// This returns a set of stable index ranges that are _requied_ to be updated together with the changed ones in the view_range.
+    ///
+    /// This view_range is the one returned from `view_range()`.
+    ///
+    /// Architecture: If nothing had changed, we already know the view range.
+    pub fn update_view_range(
+        &mut self,
+        scene: &Scene,
+        view_range: Range<StableRowIndex>,
+    ) -> RangeSet<StableRowIndex> {
+        let mut required_line_updates = RangeSet::new();
+
+        assert!(view_range.end > view_range.start);
+        let current_range =
+            self.first_line_stable_index..self.first_line_stable_index + self.lines.len() as isize;
+
+        let new_visual = || scene.stage(Visual::new(self.scroll_location.clone(), []));
+
+        if view_range.end <= current_range.start || view_range.start >= current_range.end {
+            // Non-overlapping: reset completely.
+            self.first_line_stable_index = view_range.start;
+            self.lines = iter::repeat_with(new_visual)
+                .take(view_range.len())
+                .collect();
+            required_line_updates.add_range(view_range);
+            return required_line_updates;
         }
 
-        let lines_to_reset = lines.min(self.rows());
-        self.reset_lines(0..lines_to_reset);
-    }
+        // Overlapping.
 
-    pub fn resize(&mut self, rows: usize, scene: &Scene) {
-        match rows.cmp(&self.rows()) {
-            Ordering::Less => {
-                self.visible_lines.drain(rows..);
+        // Positive movement: down, negative: up
+        let top_delta = view_range.start - current_range.start;
+        match top_delta {
+            _ if top_delta > 0 => {
+                let to_remove = top_delta;
+                self.lines.drain(0..(to_remove as usize));
+                self.first_line_stable_index += to_remove;
             }
-            Ordering::Equal => {}
-            Ordering::Greater => {
-                let added = rows - self.rows();
-                (0..added).for_each(|_| {
-                    self.visible_lines.push_back(scene.stage(Visual {
-                        location: self.scroll_location.clone(),
-                        shapes: [].into(),
-                    }));
-                });
+            _ if top_delta < 0 => {
+                let to_add = -top_delta;
+                for _ in 0..to_add {
+                    self.lines.push_front(new_visual());
+                }
+                self.first_line_stable_index -= to_add;
+                required_line_updates.add_range(view_range.start..current_range.start);
             }
+            _ => {}
         }
 
-        assert_eq!(self.visible_lines.len(), rows)
-    }
+        let bottom_delta = view_range.end - current_range.end;
+        match bottom_delta {
+            _ if bottom_delta > 0 => {
+                let to_add = bottom_delta as usize;
+                self.lines
+                    .extend(iter::repeat_with(new_visual).take(to_add));
+                required_line_updates.add_range(current_range.end..view_range.end);
+            }
+            _ if bottom_delta < 0 => {
+                let to_remove = (-bottom_delta) as usize;
+                self.lines.truncate(self.lines.len() - to_remove);
+            }
+            _ => {}
+        }
 
-    fn reset_lines(&mut self, range: Range<usize>) {
-        self.visible_lines.range_mut(range).for_each(|l| {
-            // Performance: Only change if not already empty?
-            l.update_with(|l| l.shapes = [].into());
-        });
+        assert_eq!(
+            view_range,
+            self.first_line_stable_index..self.first_line_stable_index + self.lines.len() as isize
+        );
+
+        required_line_updates
     }
 
     pub fn update_lines(
         &mut self,
-        // Not used, we don't stage new objects here (yet!).
-        _scene: &Scene,
-        visual_line_index_top: usize,
+        first_line_stable_index: StableRowIndex,
         lines: &[Line],
     ) -> Result<()> {
+        let update_range = first_line_stable_index..first_line_stable_index + lines.len() as isize;
+        let lines_range =
+            self.first_line_stable_index..self.first_line_stable_index + self.lines.len() as isize;
+        if update_range.start < lines_range.start || update_range.end > lines_range.end {
+            bail!("Internal error: Updated lines {update_range:?} is not inside {lines_range:?}");
+        }
+
+        // Detail: This may currently be animating, so take the final scroll offset value
+        let scroll_offset_px = self.scroll_offset_px();
+        let line_height_px = self.line_height_px();
+
         for (i, line) in lines.iter().enumerate() {
-            let line_index = visual_line_index_top + i;
-            // Detail: This may currently be animating, so take the final value (and assume that the
-            // final value is always on pixel boundaries ... and because of precision errors we
-            // round()).
-            let top = self.scroll_offset_px.final_value().round() as i64
-                + (line_index as i64 * self.font.cell_size_px().1 as i64);
+            let top = scroll_offset_px + (first_line_stable_index as i64 * line_height_px);
             let shapes = {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
                 let mut font_system = self.font_system.lock().unwrap();
                 self.line_to_shapes(&mut font_system, top, line)?
             };
-            self.visible_lines[line_index].update_with(|v| {
+
+            let line_index =
+                (update_range.start - self.first_line_stable_index + i as isize) as usize;
+
+            self.lines[line_index].update_with(|v| {
                 v.shapes = shapes.into();
             });
         }
@@ -265,7 +327,7 @@ impl Panel {
     }
 
     fn rows(&self) -> usize {
-        self.visible_lines.len()
+        self.lines.len()
     }
 }
 

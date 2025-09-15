@@ -50,9 +50,9 @@ impl TerminalState {
         let current_seq_no = terminal.current_seqno();
         let terminal_updated = current_seq_no > self.last_rendered_seq_no;
         assert!(current_seq_no >= self.last_rendered_seq_no);
-        let mut scroll_amount = 0;
         let stable_top = screen.visible_row_to_stable_row(0);
-        let mut set = RangeSet::new();
+        // The stable row indices of the lines that need updating.
+        let mut lines_to_update = RangeSet::new();
 
         if terminal_updated {
             // Physical: 0: The first line at the beginning of the scrollback buffer. The first
@@ -64,37 +64,43 @@ impl TerminalState {
             //
             // Visible: 0: Top of the screen.
 
+            let mut scroll_amount = 0;
+
             if !alt_screen_active && stable_top != self.current_stable_top_primary {
                 scroll_amount = stable_top - self.current_stable_top_primary;
                 self.current_stable_top_primary = stable_top;
             }
 
-            let view_stable_range = stable_top..stable_top + screen.physical_rows as isize;
+            // We need to scroll first, so that the visible range is up to date (even though this
+            // should not make a difference when the panel is currently animating).
 
-            // Production: Add a kind of view into the stable rows?
+            if scroll_amount != 0 {
+                panel.scroll(scroll_amount);
+            }
+
+            // Get the stable view range from the panel. It can't be computed here, because of the
+            // animation range.
+            let view_stable_range = panel.view_range(screen.physical_rows);
+
+            // Set up the lines to update with the ones the panel requests explicitly (For example
+            // caused through scrolling in new lines).
+            lines_to_update = panel.update_view_range(scene, view_stable_range.clone());
+
+            // Extend the range by the lines that have actually changed in the view range.
             let lines_changed_stable =
                 screen.get_changed_stable_rows(view_stable_range, self.last_rendered_seq_no);
 
-            lines_changed_stable.into_iter().for_each(|l| set.add(l));
+            lines_changed_stable
+                .into_iter()
+                .for_each(|l| lines_to_update.add(l));
 
-            // ADR: Decided to keep the time we lock the Terminal as short as possible, so that new data
-            // can be fed in as fast as possible.
-
-            for stable_range in set.iter() {
+            for stable_range in lines_to_update.iter() {
                 let phys_range = screen.stable_range(stable_range);
                 assert!(stable_range.start >= stable_top);
-                // let visible_range_start = stable_range.start - stable_top;
 
-                // Architecture: Going through building a set for accessing each changed line
-                // individually does not actually make sense when we just need to access Line
-                // references, but we can't access them directly.
-                //
-                // **Update**: Currently, it does make sense because of locking FontSystem only once
-                // (but hey, this could also be bad).
-                //
-                // Performance: After a terminal `clear`, all lines below the cursor are
-                // invalidated, too for some reason (there _is_ a `SequenceNo` for every line, may
-                // be there is a way to find out if the lines actually have changed).
+                // Performance: After a terminal `clear`, _all_ lines below the cursor are
+                // invalidated for some reason (there _is_ a `SequenceNo` for every line, may be
+                // there is a way to find out if the lines actually have changed).
 
                 screen.with_phys_lines(phys_range, |lines| {
                     // This is guaranteed to be called only once for all lines.
@@ -105,29 +111,25 @@ impl TerminalState {
 
         let cursor_pos = terminal.cursor_pos();
 
-        // Release the terminal lock.
+        // ADR: Decided to keep the time we lock the Terminal as short as possible, so that terminal
+        // changes can be produced as fast as possible.
         drop(terminal);
 
-        if scroll_amount != 0 {
-            panel.scroll(scroll_amount);
-        }
-
         // Push the lines to the panel.
-
         let mut lines_index = 0;
-        for stable_range in set.iter() {
-            let visible_range_start = stable_range.start - stable_top;
+        for stable_range in lines_to_update.iter() {
             let lines_count = stable_range.len();
 
             panel.update_lines(
-                scene,
-                visible_range_start as usize,
+                stable_range.start,
                 &self.line_buf[lines_index..lines_index + lines_count],
             )?;
 
             lines_index += lines_count;
         }
         self.line_buf.clear();
+
+        // Update cursor and selection
 
         Self::update_cursor(cursor_pos, panel, window_state.focused, scene);
 
