@@ -50,9 +50,6 @@ impl TerminalState {
         let current_seq_no = terminal.current_seqno();
         let terminal_updated = current_seq_no > self.last_rendered_seq_no;
         assert!(current_seq_no >= self.last_rendered_seq_no);
-        let stable_top = screen.visible_row_to_stable_row(0);
-        // The stable row indices of the lines that need updating.
-        let mut lines_to_update = RangeSet::new();
 
         // Physical: 0: The first line at the beginning of the scrollback buffer. The first
         // line stored in the lines of the screen.
@@ -63,18 +60,15 @@ impl TerminalState {
         //
         // Visible: 0: Top of the screen.
 
-        let mut scroll_amount = 0;
-
-        if !alt_screen_active && stable_top != self.current_stable_top_primary {
-            scroll_amount = stable_top - self.current_stable_top_primary;
-            self.current_stable_top_primary = stable_top;
-        }
-
         // We need to scroll first, so that the visible range is up to date (even though this
         // should not make a difference when the panel is currently animating).
-
-        if scroll_amount != 0 {
-            panel.scroll(scroll_amount);
+        let stable_top = screen.visible_row_to_stable_row(0);
+        if !alt_screen_active && stable_top != self.current_stable_top_primary {
+            let scroll_amount = stable_top - self.current_stable_top_primary;
+            if scroll_amount != 0 {
+                panel.scroll(scroll_amount);
+            }
+            self.current_stable_top_primary = stable_top;
         }
 
         // Get the stable view range from the panel. It can't be computed here, because of the
@@ -83,7 +77,7 @@ impl TerminalState {
 
         // Set up the lines to update with the ones the panel requests explicitly (For example
         // caused through scrolling in new lines).
-        lines_to_update = panel.update_view_range(scene, view_stable_range.clone());
+        let mut lines_to_update = panel.update_view_range(scene, view_stable_range.clone());
 
         // Extend the range by the lines that have actually changed in the view range.
         let lines_changed_stable = if terminal_updated {
@@ -98,8 +92,6 @@ impl TerminalState {
 
         for stable_range in lines_to_update.iter() {
             let phys_range = screen.stable_range(stable_range);
-            assert!(stable_range.start >= stable_top);
-
             // Performance: After a terminal `clear`, _all_ lines below the cursor are
             // invalidated for some reason (there _is_ a `SequenceNo` for every line, may be
             // there is a way to find out if the lines actually have changed).
