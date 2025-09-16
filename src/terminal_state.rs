@@ -8,6 +8,7 @@ use massive_input::Progress;
 
 use crate::{
     Panel, WindowState,
+    range_tools::{RangeTools, WithLength},
     selection::{Selection, SelectionPos},
 };
 use massive_scene::Scene;
@@ -85,12 +86,11 @@ impl TerminalState {
             // correct range of updated lines (which it doesn't if lines are requested outside of
             // its scrollback buffer).
 
-            let current_terminal_stable_phys_range = self.current_stable_top_primary
-                ..self.current_stable_top_primary + screen.physical_rows as isize;
+            let current_terminal_stable_phys_range = self
+                .current_stable_top_primary
+                .with_len(screen.physical_rows);
 
-            if view_stable_range.start >= current_terminal_stable_phys_range.end
-                || view_stable_range.end <= current_terminal_stable_phys_range.start
-            {
+            if !current_terminal_stable_phys_range.intersects(&view_stable_range) {
                 debug!("Resetting scrolling animation (terminal view is far away from ours)");
                 panel.reset_animations();
                 view_stable_range = panel.view_range(screen.physical_rows)
@@ -144,7 +144,7 @@ impl TerminalState {
 
             panel.update_lines(
                 stable_range.start,
-                &self.temporary_line_buf[lines_index..lines_index + lines_count],
+                &self.temporary_line_buf[lines_index.with_len(lines_count)],
             )?;
 
             lines_index += lines_count;

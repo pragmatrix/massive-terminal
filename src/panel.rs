@@ -29,6 +29,7 @@ use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, Tex
 
 use crate::{
     TerminalFont,
+    range_tools::{RangeTools, WithLength},
     selection::{NormalizedSelectionRange, SelectionRange},
     terminal_geometry::TerminalGeometry,
     window_geometry::CellRect,
@@ -207,8 +208,7 @@ impl Panel {
         let mut required_line_updates = RangeSet::new();
 
         assert!(view_range.end > view_range.start);
-        let current_range =
-            self.first_line_stable_index..self.first_line_stable_index + self.lines.len() as isize;
+        let current_range = self.first_line_stable_index.with_len(self.lines.len());
 
         let new_visual = || scene.stage(Visual::new(self.scroll_location.clone(), []));
 
@@ -260,7 +260,7 @@ impl Panel {
 
         assert_eq!(
             view_range,
-            self.first_line_stable_index..self.first_line_stable_index + self.lines.len() as isize
+            self.first_line_stable_index.with_len(self.lines.len())
         );
 
         required_line_updates
@@ -271,10 +271,9 @@ impl Panel {
         first_line_stable_index: StableRowIndex,
         lines: &[Line],
     ) -> Result<()> {
-        let update_range = first_line_stable_index..first_line_stable_index + lines.len() as isize;
-        let lines_range =
-            self.first_line_stable_index..self.first_line_stable_index + self.lines.len() as isize;
-        if update_range.start < lines_range.start || update_range.end > lines_range.end {
+        let update_range = first_line_stable_index.with_len(lines.len());
+        let lines_range = self.first_line_stable_index.with_len(self.lines.len());
+        if !update_range.is_inside(&lines_range) {
             bail!("Internal error: Updated lines {update_range:?} is not inside {lines_range:?}");
         }
 

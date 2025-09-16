@@ -29,6 +29,7 @@ use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellEvent, ShellWi
 mod input;
 mod logical_line;
 mod panel;
+mod range_tools;
 mod selection;
 mod terminal_font;
 mod terminal_geometry;

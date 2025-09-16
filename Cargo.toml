@@ -28,6 +28,7 @@ derive_more.workspace = true
 euclid.workspace = true
 futures.workspace = true
 log.workspace = true
+num.workspace = true
 portable-pty.workspace = true
 rangeset.workspace = true
 sys-locale.workspace = true
