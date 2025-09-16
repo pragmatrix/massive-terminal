@@ -2382,6 +2382,7 @@ dependencies = [
  "anyhow",
  "cgmath",
  "cosmic-text",
+ "derive_more",
  "env_logger",
  "futures",
  "getrandom 0.2.16",

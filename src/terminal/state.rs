@@ -4,34 +4,46 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use derive_more::Debug;
 use log::{debug, info};
-use massive_input::Progress;
+use massive_shell::Scene;
 
 use crate::{
     TerminalView, WindowState,
     range_tools::{RangeTools, WithLength},
     selection::{Selection, SelectionPos},
 };
-use massive_scene::Scene;
+use massive_input::Progress;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{CursorPosition, Line, StableRowIndex, Terminal};
 
 #[derive(Debug)]
 pub struct TerminalState {
+    #[debug(skip)]
+    // view_gen: Box<dyn Fn(&Scene) -> TerminalView + Send>,
     pub last_rendered_seq_no: SequenceNo,
     // For scroll detection. Primary screen only.
     pub current_stable_top_primary: StableRowIndex,
     temporary_line_buf: Vec<Line>,
     selection: Selection,
+    view: TerminalView,
 }
 
 impl TerminalState {
-    pub fn new(last_rendered_seq_no: SequenceNo) -> Self {
+    pub fn new(
+        view_gen: impl Fn(&Scene) -> TerminalView + Send + 'static,
+        last_rendered_seq_no: SequenceNo,
+        scene: &Scene,
+    ) -> Self {
+        let view = view_gen(scene);
         Self {
             last_rendered_seq_no,
             current_stable_top_primary: 0,
             temporary_line_buf: Vec::new(),
+
             selection: Default::default(),
+            // view_gen: Box::new(view_gen),
+            view,
         }
     }
 
@@ -40,9 +52,18 @@ impl TerminalState {
         &mut self,
         terminal: &Arc<Mutex<Terminal>>,
         window_state: &WindowState,
-        view: &mut TerminalView,
         scene: &Scene,
     ) -> Result<()> {
+        let view = &mut self.view;
+
+        // Currently we need always apply view animations, otherwise the scroll matrix is not
+        // in sync with the updated lines which results in flickering while scrolling (i.e.
+        // lines disappearing too early when scrolling up).
+        //
+        // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
+        // concept.
+        view.apply_animations();
+
         let terminal = terminal.lock().unwrap();
         let alt_screen_active = terminal.is_alt_screen_active();
 
