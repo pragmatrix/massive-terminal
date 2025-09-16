@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use log::info;
+use log::{debug, info};
 use massive_input::Progress;
 
 use crate::{
@@ -19,7 +19,7 @@ pub struct TerminalState {
     pub last_rendered_seq_no: SequenceNo,
     // For scroll detection. Primary screen only.
     pub current_stable_top_primary: StableRowIndex,
-    line_buf: Vec<Line>,
+    temporary_line_buf: Vec<Line>,
     selection: Selection,
 }
 
@@ -28,7 +28,7 @@ impl TerminalState {
         Self {
             last_rendered_seq_no,
             current_stable_top_primary: 0,
-            line_buf: Vec::new(),
+            temporary_line_buf: Vec::new(),
             selection: Default::default(),
         }
     }
@@ -73,7 +73,34 @@ impl TerminalState {
 
         // Get the stable view range from the panel. It can't be computed here, because of the
         // animation range.
-        let view_stable_range = panel.view_range(screen.physical_rows);
+        let mut view_stable_range;
+        {
+            view_stable_range = panel.view_range(screen.physical_rows);
+
+            // If the view's stable range is out of range compared to the final view, it means that
+            // scrolling lags behind at least one screen. In this case, reset scrolling and get a
+            // new view_range.
+            //
+            // Detail: As a side effect, this also makes sure that the terminal always returns a
+            // correct range of updated lines (which it doesn't if lines are requested outside of
+            // its scrollback buffer).
+
+            let current_terminal_stable_phys_range = self.current_stable_top_primary
+                ..self.current_stable_top_primary + screen.physical_rows as isize;
+
+            if view_stable_range.start >= current_terminal_stable_phys_range.end
+                || view_stable_range.end <= current_terminal_stable_phys_range.start
+            {
+                debug!("Resetting scrolling animation (terminal view is far away from ours)");
+                panel.reset_animations();
+                view_stable_range = panel.view_range(screen.physical_rows)
+            }
+
+            info!(
+                "View stable range (panel's view): {view_stable_range:?}, current top: {}",
+                self.current_stable_top_primary
+            );
+        }
 
         // Set up the lines to update with the ones the panel requests explicitly (For example
         // caused through scrolling).
@@ -99,7 +126,8 @@ impl TerminalState {
 
             screen.with_phys_lines(phys_range, |lines| {
                 // This is guaranteed to be called only once for all lines.
-                self.line_buf.extend(lines.iter().copied().cloned());
+                self.temporary_line_buf
+                    .extend(lines.iter().copied().cloned());
             });
         }
 
@@ -116,12 +144,12 @@ impl TerminalState {
 
             panel.update_lines(
                 stable_range.start,
-                &self.line_buf[lines_index..lines_index + lines_count],
+                &self.temporary_line_buf[lines_index..lines_index + lines_count],
             )?;
 
             lines_index += lines_count;
         }
-        self.line_buf.clear();
+        self.temporary_line_buf.clear();
 
         // Update cursor and selection
 

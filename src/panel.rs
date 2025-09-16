@@ -147,6 +147,14 @@ impl Panel {
         self.font.cell_size_px().1 as i64
     }
 
+    /// Reset the current soft scrolling.
+    ///
+    /// This places all lines at their final positions.
+    pub fn reset_animations(&mut self) {
+        self.scroll_offset_px.commit_animation();
+        self.apply_animations();
+    }
+
     /// Update currently running animations.
     pub fn apply_animations(&mut self) {
         // Detail: Even if the timeline is not anymore animating, we might not have retrieved and
