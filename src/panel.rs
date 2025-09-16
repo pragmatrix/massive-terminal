@@ -11,7 +11,7 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use log::{info, trace};
+use log::trace;
 use massive_animation::{Interpolation, Timeline};
 use rangeset::RangeSet;
 use tuple::Map;
@@ -38,10 +38,13 @@ const SCROLL_DURATION: Duration = Duration::from_millis(100);
 
 /// Panel is the (massive) representation of the terminal.
 ///
-/// - It always contains a single [`Visual`] for each line. Even if this line is
-///   currently not rendered.
+/// - It always contains a single [`Visual`] for each line. Even if this line is currently not
+///   rendered.
 /// - The coordinate system starts the left top (centering it may cause half-pixel).
 /// - All lines use the same base "location" and translate
+///
+/// Naming: ScreenRenderer? ScreenVisuals, TerminalScreen, because now this corresponds to a
+/// terminal screen.
 #[derive(Debug)]
 pub struct Panel {
     font_system: Arc<Mutex<FontSystem>>,

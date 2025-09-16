@@ -11,7 +11,6 @@ use crate::{
     selection::{Selection, SelectionPos},
 };
 use massive_scene::Scene;
-use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{CursorPosition, Line, StableRowIndex, Terminal};
 
@@ -77,19 +76,20 @@ impl TerminalState {
         let view_stable_range = panel.view_range(screen.physical_rows);
 
         // Set up the lines to update with the ones the panel requests explicitly (For example
-        // caused through scrolling in new lines).
+        // caused through scrolling).
         let mut lines_to_update = panel.update_view_range(scene, view_stable_range.clone());
 
         // Extend the range by the lines that have actually changed in the view range.
         let lines_changed_stable = if terminal_updated {
-            screen.get_changed_stable_rows(view_stable_range, self.last_rendered_seq_no)
+            screen.get_changed_stable_rows(view_stable_range.clone(), self.last_rendered_seq_no)
         } else {
             Vec::new()
         };
 
-        lines_changed_stable
-            .into_iter()
-            .for_each(|l| lines_to_update.add(l));
+        lines_changed_stable.into_iter().for_each(|l| {
+            debug_assert!(view_stable_range.contains(&l));
+            lines_to_update.add(l)
+        });
 
         for stable_range in lines_to_update.iter() {
             let phys_range = screen.stable_range(stable_range);
