@@ -1,11 +1,11 @@
 mod font;
 mod geometry;
-mod screen;
+mod view;
 mod scroller;
 mod state;
 
 pub use font::*;
 pub use geometry::*;
-pub use screen::*;
+pub use view::*;
 pub use scroller::*;
 pub use state::*;

@@ -66,14 +66,14 @@ impl TerminalGeometry {
         }
     }
 
-    /// The cell for a particular pixel coordinate in the pixel space of the panel.
-    pub fn panel_to_cell(&self, panel_px: PixelPoint) -> Option<(usize, usize)> {
-        let (x, y) = panel_px.into();
+    /// The cell for a particular pixel coordinate in the pixel space of the view.
+    pub fn view_to_cell(&self, view_px: PixelPoint) -> Option<(usize, usize)> {
+        let (x, y) = view_px.into();
 
-        let panel_size = self.size_px().map(|c| c as f64);
+        let view_size = self.size_px().map(|c| c as f64);
 
         // Abstraction: Use Rect here
-        if x < 0.0 || y < 0.0 || x >= panel_size.0 || y >= panel_size.1 {
+        if x < 0.0 || y < 0.0 || x >= view_size.0 || y >= view_size.1 {
             return None;
         }
 
@@ -87,11 +87,11 @@ impl TerminalGeometry {
     /// Decide if scrolling is needed and how many pixels the hit position lies away from.
     ///
     /// Negative values scroll up, positives, scroll down.
-    pub fn scroll_distance(&self, panel_hit: PixelPoint) -> Option<f64> {
-        let hit_y = panel_hit.y;
+    pub fn scroll_distance(&self, view_hit: PixelPoint) -> Option<f64> {
+        let hit_y = view_hit.y;
 
         if hit_y < 0.0 {
-            return Some(panel_hit.y);
+            return Some(view_hit.y);
         }
 
         let height = self.size_px().1 as f64;

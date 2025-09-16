@@ -66,14 +66,14 @@ struct MassiveTerminal {
     terminal: Arc<Mutex<Terminal>>,
 
     scene: Scene,
-    panel: TerminalScreen,
-    panel_matrix: Handle<Matrix>,
+    view: TerminalView,
+    view_matrix: Handle<Matrix>,
 
     event_manager: EventManager,
 
     window_state: WindowState,
     terminal_state: TerminalState,
-    // Architecture: This may belong into TerminalState or even Panel?
+    // Architecture: This may belong into TerminalState or even TerminalView?
     terminal_scroller: TerminalScroller,
 
     // User state
@@ -166,17 +166,17 @@ impl MassiveTerminal {
 
         let scene = Scene::new();
 
-        let panel_matrix = scene.stage(Matrix::identity());
-        let panel_location = scene.stage(Location {
+        let view_matrix = scene.stage(Matrix::identity());
+        let view_location = scene.stage(Location {
             parent: None,
-            matrix: panel_matrix.clone(),
+            matrix: view_matrix.clone(),
         });
 
-        let panel = TerminalScreen::new(
+        let view = TerminalView::new(
             font_system,
             terminal_font,
             context.timeline(0.0),
-            panel_location,
+            view_location,
             &scene,
         );
 
@@ -190,8 +190,8 @@ impl MassiveTerminal {
             pty_pair,
             terminal,
             scene,
-            panel,
-            panel_matrix,
+            view,
+            view_matrix,
             event_manager: EventManager::default(),
             window_state: WindowState::new(window_geometry),
             terminal_state: TerminalState::new(last_rendered_seq_no),
@@ -255,13 +255,13 @@ impl MassiveTerminal {
                 self.terminal_scroller.proceed();
             }
 
-            // Currently we need always apply panel animations, otherwise the scroll matrix is not
+            // Currently we need always apply view animations, otherwise the scroll matrix is not
             // in sync with the updated lines which results in flickering while scrolling (i.e.
             // lines disappearing too early when scrolling up).
             //
             // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
             // concept.
-            self.panel.apply_animations();
+            self.view.apply_animations();
 
             {
                 // Update lines & cursor
@@ -269,7 +269,7 @@ impl MassiveTerminal {
                 self.terminal_state.update(
                     &self.terminal,
                     &self.window_state,
-                    &mut self.panel,
+                    &mut self.view,
                     &self.scene,
                 )?;
             }
@@ -289,7 +289,7 @@ impl MassiveTerminal {
                     )
                 };
 
-                self.panel_matrix.update_if_changed(center_transform);
+                self.view_matrix.update_if_changed(center_transform);
             }
         }
 
@@ -316,20 +316,19 @@ impl MassiveTerminal {
 
         // Process selecting user state
 
-        let hit_test_panel = |p| {
+        let hit_test_view = |p| {
             self.renderer
                 .geometry()
-                .unproject_to_model_z0(p, &self.panel_matrix.value())
+                .unproject_to_model_z0(p, &self.view_matrix.value())
                 .map(|p| (p.x, p.y).into())
         };
 
-        let panel_to_cell =
-            |panel_hit| self.window_state.terminal_geometry.panel_to_cell(panel_hit);
+        let view_to_cell = |view_hit| self.window_state.terminal_geometry.view_to_cell(view_hit);
 
         match &mut self.selecting {
             None => {
                 if let Some(movement) = ev.detect_movement(MouseButton::Left, min_movement_distance)
-                    && let Some(cell_hit) = hit_test_panel(movement.from).and_then(panel_to_cell)
+                    && let Some(cell_hit) = hit_test_view(movement.from).and_then(view_to_cell)
                 {
                     self.terminal_state.selection_begin(cell_hit);
                     self.selecting = Some(movement);
@@ -337,14 +336,14 @@ impl MassiveTerminal {
             }
             Some(movement) => {
                 if let Some(progress) = movement.track_to(&ev) {
-                    let progress = progress.map_or_cancel(hit_test_panel);
+                    let progress = progress.map_or_cancel(hit_test_view);
 
                     // Scroll?
-                    if let Some(panel_hit) = progress.proceeds() {
+                    if let Some(view_hit) = progress.proceeds() {
                         let scroll = self
                             .window_state
                             .terminal_geometry
-                            .scroll_distance(*panel_hit);
+                            .scroll_distance(*view_hit);
                         if let Some(scroll) = scroll {
                             self.terminal_scroller.set_velocity(scroll);
                         }
@@ -353,7 +352,7 @@ impl MassiveTerminal {
                     // Map to selection.
                     // Robustness: Should we support negative cell hits, so that the selection can always progress here?
 
-                    if let Some(cell_progress) = progress.try_map(panel_to_cell) {
+                    if let Some(cell_progress) = progress.try_map(view_to_cell) {
                         assert!(self.terminal_state.selection_can_progress());
                         self.terminal_state.selection_progress(cell_progress);
                     }

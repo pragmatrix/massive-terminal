@@ -1,4 +1,5 @@
-//! The state we need to store to properly detect changes in the wezterm Terminal instance and to update our Panel.
+//! The state we need to store to properly detect changes in the wezterm Terminal instance and to
+//! update our view.
 
 use std::sync::{Arc, Mutex};
 
@@ -7,7 +8,7 @@ use log::{debug, info};
 use massive_input::Progress;
 
 use crate::{
-    TerminalScreen, WindowState,
+    TerminalView, WindowState,
     range_tools::{RangeTools, WithLength},
     selection::{Selection, SelectionPos},
 };
@@ -34,12 +35,12 @@ impl TerminalState {
         }
     }
 
-    /// Update the panel lines, cursor, and selection.
+    /// Update the view lines, cursor, and selection.
     pub fn update(
         &mut self,
         terminal: &Arc<Mutex<Terminal>>,
         window_state: &WindowState,
-        panel: &mut TerminalScreen,
+        view: &mut TerminalView,
         scene: &Scene,
     ) -> Result<()> {
         let terminal = terminal.lock().unwrap();
@@ -62,21 +63,21 @@ impl TerminalState {
         // Visible: 0: Top of the screen.
 
         // We need to scroll first, so that the visible range is up to date (even though this
-        // should not make a difference when the panel is currently animating).
+        // should not make a difference when the view is currently animating).
         let stable_top_in_screen_view = screen.visible_row_to_stable_row(0);
         if !alt_screen_active && stable_top_in_screen_view != self.current_stable_top_primary {
             let scroll_amount = stable_top_in_screen_view - self.current_stable_top_primary;
             if scroll_amount != 0 {
-                panel.scroll(scroll_amount);
+                view.scroll(scroll_amount);
             }
             self.current_stable_top_primary = stable_top_in_screen_view;
         }
 
-        // Get the stable view range from the panel. It can't be computed here, because of the
+        // Get the stable view range from the view. It can't be computed here, because of the
         // animation range.
         let mut view_stable_range;
         {
-            view_stable_range = panel.view_range(screen.physical_rows);
+            view_stable_range = view.view_range(screen.physical_rows);
 
             // If the view's stable range is out of range compared to the final view, it means that
             // scrolling lags behind at least one screen. In this case, reset scrolling and get a
@@ -92,19 +93,19 @@ impl TerminalState {
 
             if !current_terminal_stable_phys_range.intersects(&view_stable_range) {
                 debug!("Resetting scrolling animation (terminal view is far away from ours)");
-                panel.reset_animations();
-                view_stable_range = panel.view_range(screen.physical_rows)
+                view.reset_animations();
+                view_stable_range = view.view_range(screen.physical_rows)
             }
 
             info!(
-                "View stable range (panel's view): {view_stable_range:?}, current top: {}",
+                "View's stable range: {view_stable_range:?}, current top: {}",
                 self.current_stable_top_primary
             );
         }
 
-        // Set up the lines to update with the ones the panel requests explicitly (For example
-        // caused through scrolling).
-        let mut lines_to_update = panel.update_view_range(scene, view_stable_range.clone());
+        // Set up the lines to update with the ones the view requests explicitly (For example caused
+        // through scrolling).
+        let mut lines_to_update = view.update_view_range(scene, view_stable_range.clone());
 
         // Extend the range by the lines that have actually changed in the view range.
         let lines_changed_stable = if terminal_updated {
@@ -137,12 +138,12 @@ impl TerminalState {
         // changes can be produced as fast as possible.
         drop(terminal);
 
-        // Push the lines to the panel.
+        // Push the lines to the view.
         let mut lines_index = 0;
         for stable_range in lines_to_update.iter() {
             let lines_count = stable_range.len();
 
-            panel.update_lines(
+            view.update_lines(
                 stable_range.start,
                 &self.temporary_line_buf[lines_index.with_len(lines_count)],
             )?;
@@ -153,9 +154,9 @@ impl TerminalState {
 
         // Update cursor and selection
 
-        Self::update_cursor(cursor_pos, panel, window_state.focused, scene);
+        Self::update_cursor(cursor_pos, view, window_state.focused, scene);
 
-        panel.update_selection(
+        view.update_selection(
             scene,
             self.selection.range(),
             &window_state.terminal_geometry,
@@ -168,15 +169,15 @@ impl TerminalState {
         Ok(())
     }
 
-    /// Update the cursor of the panel to reflect to position in the terminal.
+    /// Update the cursor of the view to reflect to position in the terminal.
     // Architecture: Not sure where this belongs to.
     pub fn update_cursor(
         cursor_pos: CursorPosition,
-        panel: &mut TerminalScreen,
+        view: &mut TerminalView,
         focused: bool,
         scene: &Scene,
     ) {
-        panel.update_cursor(scene, cursor_pos, focused);
+        view.update_cursor(scene, cursor_pos, focused);
     }
 
     pub fn selection(&self) -> &Selection {

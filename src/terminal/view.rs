@@ -37,7 +37,7 @@ use crate::{
 
 const SCROLL_DURATION: Duration = Duration::from_millis(100);
 
-/// Panel is the (massive) representation of the terminal.
+/// TerminalView is the into a terminal's screen lines.
 ///
 /// - It always contains a single [`Visual`] for each line. Even if this line is currently not
 ///   rendered.
@@ -47,7 +47,7 @@ const SCROLL_DURATION: Duration = Duration::from_millis(100);
 /// Naming: ScreenRenderer? ScreenVisuals, TerminalScreen, because now this corresponds to a
 /// terminal screen.
 #[derive(Debug)]
-pub struct TerminalScreen {
+pub struct TerminalView {
     font_system: Arc<Mutex<FontSystem>>,
     /// The terminal font.
     font: TerminalFont,
@@ -82,8 +82,8 @@ pub struct TerminalScreen {
     selection: Option<Handle<Visual>>,
 }
 
-impl TerminalScreen {
-    /// Create a new panel.
+impl TerminalView {
+    /// Create a new view.
     ///
     /// Scene is needed to pre-create all the rows. This in turn prevents us from caring too much
     /// lazily creating them later, but may put a little more pressure on the renderer to filter out
@@ -120,7 +120,7 @@ impl TerminalScreen {
 
 // Lines
 
-impl TerminalScreen {
+impl TerminalView {
     /// Scroll all lines by delta lines.
     ///
     /// Positive: moves all lines up, negative moves all lines down. This makes sure that empty
@@ -478,7 +478,7 @@ enum BasicCursorShape {
 
 // Cursor
 
-impl TerminalScreen {
+impl TerminalView {
     pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, window_focused: bool) {
         match pos.visibility {
             CursorVisibility::Hidden => {
@@ -553,7 +553,7 @@ impl TerminalScreen {
 
 // Selection
 
-impl TerminalScreen {
+impl TerminalView {
     pub fn update_selection(
         &mut self,
         scene: &Scene,
