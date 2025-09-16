@@ -22,8 +22,10 @@ use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConf
 
 use massive_geometry::{Camera, Color, Identity};
 use massive_input::{EventManager, ExternalEvent, Movement};
-use massive_scene::{Handle, Location, Matrix, Scene};
-use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellEvent, ShellWindow, shell};
+use massive_scene::{Handle, Location, Matrix};
+use massive_shell::{
+    ApplicationContext, AsyncWindowRenderer, Scene, ShellEvent, ShellWindow, shell,
+};
 
 mod input;
 mod logical_line;
@@ -66,7 +68,6 @@ struct MassiveTerminal {
     terminal: Arc<Mutex<Terminal>>,
 
     scene: Scene,
-    view: TerminalView,
     view_matrix: Handle<Matrix>,
 
     event_manager: EventManager,
@@ -172,16 +173,20 @@ impl MassiveTerminal {
             matrix: view_matrix.clone(),
         });
 
-        let view = TerminalView::new(
-            font_system,
-            terminal_font,
-            context.timeline(0.0),
-            view_location,
-            &scene,
-        );
+        let view_gen = move |scene: &Scene, scroll_offset| {
+            TerminalView::new(
+                font_system.clone(),
+                terminal_font.clone(),
+                scroll_offset,
+                view_location.clone(),
+                scene,
+            )
+        };
 
         let terminal_scroller =
-            TerminalScroller::new(&context, Duration::from_secs(1), Duration::from_secs(1));
+            TerminalScroller::new(&scene, Duration::from_secs(1), Duration::from_secs(1));
+
+        let terminal_state = TerminalState::new(view_gen, last_rendered_seq_no, &scene);
 
         Ok(Self {
             context,
@@ -190,11 +195,10 @@ impl MassiveTerminal {
             pty_pair,
             terminal,
             scene,
-            view,
             view_matrix,
             event_manager: EventManager::default(),
             window_state: WindowState::new(window_geometry),
-            terminal_state: TerminalState::new(last_rendered_seq_no),
+            terminal_state,
             terminal_scroller,
             selecting: None,
             clipboard: Clipboard::new()?,
@@ -238,11 +242,9 @@ impl MassiveTerminal {
             // Performance: We begin an update cycle whenever the terminal advances, too. This
             // should probably be done asynchronously, deferred, etc. But note that the renderer is
             // also running asynchronously at the end of the update cycle.
-            let _cycle = self.context.begin_update_cycle(
-                &self.scene,
-                &mut self.renderer,
-                shell_event_opt.as_ref(),
-            )?;
+            let _cycle = self
+                .scene
+                .begin_update_cycle(&mut self.renderer, shell_event_opt.as_ref())?;
 
             // Architecture: We need to enforce running animations _inside_ the update cycle
             // somehow. Otherwise this can lead to confusing bugs, for example if the following code
@@ -255,23 +257,11 @@ impl MassiveTerminal {
                 self.terminal_scroller.proceed();
             }
 
-            // Currently we need always apply view animations, otherwise the scroll matrix is not
-            // in sync with the updated lines which results in flickering while scrolling (i.e.
-            // lines disappearing too early when scrolling up).
-            //
-            // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
-            // concept.
-            self.view.apply_animations();
-
             {
                 // Update lines & cursor
 
-                self.terminal_state.update(
-                    &self.terminal,
-                    &self.window_state,
-                    &mut self.view,
-                    &self.scene,
-                )?;
+                self.terminal_state
+                    .update(&self.terminal, &self.window_state, &self.scene)?;
             }
 
             // Center

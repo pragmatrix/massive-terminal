@@ -2,7 +2,7 @@
 use std::time::Duration;
 
 use massive_animation::{Interpolation, Timeline};
-use massive_shell::ApplicationContext;
+use massive_shell::Scene;
 
 #[allow(unused)]
 #[derive(Debug)]
@@ -31,14 +31,9 @@ enum ScrollAnimationState {
 
 #[allow(unused)]
 impl TerminalScroller {
-    // Gorilla: ApplicationContext
-    pub fn new(
-        ctx: &ApplicationContext,
-        phase_in_duration: Duration,
-        phase_out_duration: Duration,
-    ) -> Self {
-        let velocity = ctx.timeline(0.0);
-        let scroll_offset = ctx.timeline(0.0);
+    pub fn new(scene: &Scene, phase_in_duration: Duration, phase_out_duration: Duration) -> Self {
+        let velocity = scene.timeline(0.0);
+        let scroll_offset = scene.timeline(0.0);
 
         Self {
             phase_in_duration,

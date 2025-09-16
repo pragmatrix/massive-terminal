@@ -12,7 +12,6 @@ use cosmic_text::{
     Wrap,
 };
 use log::trace;
-use massive_animation::{Interpolation, Timeline};
 use rangeset::RangeSet;
 use tuple::Map;
 
@@ -23,10 +22,6 @@ use termwiz::{
 };
 use wezterm_term::{CursorPosition, Intensity, Line, StableRowIndex, color::ColorPalette};
 
-use massive_geometry::{Identity, Point, Rect, Size};
-use massive_scene::{Handle, Location, Matrix, Scene, Visual};
-use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
-
 use super::TerminalGeometry;
 use crate::{
     TerminalFont,
@@ -34,6 +29,11 @@ use crate::{
     selection::{NormalizedSelectionRange, SelectionRange},
     window_geometry::CellRect,
 };
+use massive_animation::{Interpolation, Timeline};
+use massive_geometry::{Identity, Point, Rect, Size};
+use massive_scene::{Handle, Location, Matrix, Visual};
+use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
+use massive_shell::Scene;
 
 const SCROLL_DURATION: Duration = Duration::from_millis(100);
 
@@ -60,7 +60,7 @@ pub struct TerminalView {
     scroll_location: Handle<Location>,
 
     /// Positive scroll offset of the screen.
-    screen_scroll_offset: StableRowIndex,
+    scroll_offset: StableRowIndex,
 
     /// The number of pixels with which _all_ lines are transformed upwards.
     ///
@@ -91,7 +91,7 @@ impl TerminalView {
     pub fn new(
         font_system: Arc<Mutex<FontSystem>>,
         font: TerminalFont,
-        scroll_offset_px: Timeline<f64>,
+        scroll_offset: isize,
         location: Handle<Location>,
         scene: &Scene,
     ) -> Self {
@@ -102,12 +102,14 @@ impl TerminalView {
             matrix: scroll_matrix.clone(),
         });
 
+        let scroll_offset_px = (scroll_offset as i64 * font.cell_size_px().1 as i64) as f64;
+
         Self {
             font_system,
             font,
             color_palette: ColorPalette::default(),
-            screen_scroll_offset: 0,
-            scroll_offset_px,
+            scroll_offset,
+            scroll_offset_px: scene.timeline(scroll_offset_px),
             scroll_matrix,
             scroll_location,
             first_line_stable_index: 0,
@@ -121,27 +123,29 @@ impl TerminalView {
 // Lines
 
 impl TerminalView {
-    /// Scroll all lines by delta lines.
-    ///
-    /// Positive: moves all lines up, negative moves all lines down. This makes sure that empty
-    /// lines are generated.
-    pub fn scroll(&mut self, delta_lines: isize) {
+    /// Scroll to the new scroll offset.
+    pub fn scroll_to(&mut self, new_scroll_offset: StableRowIndex) {
+        let delta_lines = new_scroll_offset - self.scroll_offset;
         if delta_lines == 0 {
             return;
         }
 
-        self.screen_scroll_offset += delta_lines;
-        assert!(self.screen_scroll_offset >= 0);
+        self.scroll_offset += delta_lines;
+        assert!(self.scroll_offset >= 0);
 
         self.scroll_offset_px.animate_to(
-            self.scroll_offset_px() as f64,
+            self.scroll_offset_in_px() as f64,
             SCROLL_DURATION,
             Interpolation::CubicOut,
         );
     }
 
-    fn scroll_offset_px(&self) -> i64 {
-        self.screen_scroll_offset as i64 * self.line_height_px()
+    pub fn scroll_offset(&self) -> StableRowIndex {
+        self.scroll_offset
+    }
+
+    fn scroll_offset_in_px(&self) -> i64 {
+        self.scroll_offset as i64 * self.line_height_px()
     }
 
     fn line_height_px(&self) -> i64 {

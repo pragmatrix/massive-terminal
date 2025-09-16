@@ -4,34 +4,47 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use derive_more::Debug;
 use log::{debug, info};
-use massive_input::Progress;
+use massive_shell::Scene;
 
 use crate::{
     TerminalView, WindowState,
     range_tools::{RangeTools, WithLength},
     selection::{Selection, SelectionPos},
 };
-use massive_scene::Scene;
+use massive_input::Progress;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{CursorPosition, Line, StableRowIndex, Terminal};
 
 #[derive(Debug)]
 pub struct TerminalState {
+    #[debug(skip)]
+    #[allow(clippy::type_complexity)]
+    view_gen: Box<dyn Fn(&Scene, StableRowIndex) -> TerminalView + Send>,
     pub last_rendered_seq_no: SequenceNo,
-    // For scroll detection. Primary screen only.
-    pub current_stable_top_primary: StableRowIndex,
     temporary_line_buf: Vec<Line>,
     selection: Selection,
+    view: TerminalView,
+    alt_screen_active: bool,
 }
 
 impl TerminalState {
-    pub fn new(last_rendered_seq_no: SequenceNo) -> Self {
+    pub fn new(
+        view_gen: impl Fn(&Scene, StableRowIndex) -> TerminalView + Send + 'static,
+        last_rendered_seq_no: SequenceNo,
+        scene: &Scene,
+    ) -> Self {
+        let view = view_gen(scene, 0);
         Self {
+            view_gen: Box::new(view_gen),
             last_rendered_seq_no,
-            current_stable_top_primary: 0,
             temporary_line_buf: Vec::new(),
+
             selection: Default::default(),
+            // view_gen: Box::new(view_gen),
+            view,
+            alt_screen_active: false,
         }
     }
 
@@ -40,13 +53,39 @@ impl TerminalState {
         &mut self,
         terminal: &Arc<Mutex<Terminal>>,
         window_state: &WindowState,
-        view: &mut TerminalView,
         scene: &Scene,
     ) -> Result<()> {
-        let terminal = terminal.lock().unwrap();
-        let alt_screen_active = terminal.is_alt_screen_active();
+        let view = &mut self.view;
 
+        // Currently we need always apply view animations, otherwise the scroll matrix is not
+        // in sync with the updated lines which results in flickering while scrolling (i.e.
+        // lines disappearing too early when scrolling up).
+        //
+        // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
+        // concept.
+        view.apply_animations();
+
+        let terminal = terminal.lock().unwrap();
         let screen = terminal.screen();
+
+        // Switch between primary and alt screen.
+        {
+            let alt_screen_active = terminal.is_alt_screen_active();
+            if alt_screen_active != self.alt_screen_active {
+                // Switch
+                let scroll_offset = screen.visible_row_to_stable_row(0);
+                info!(
+                    "Switching to {} view at scroll offset {scroll_offset}",
+                    if alt_screen_active {
+                        "alternate"
+                    } else {
+                        "primary"
+                    }
+                );
+                *view = (self.view_gen)(scene, scroll_offset);
+                self.alt_screen_active = alt_screen_active;
+            }
+        }
 
         // Performance: No need to begin an update cycle if there are no visible changes
         let current_seq_no = terminal.current_seqno();
@@ -65,13 +104,7 @@ impl TerminalState {
         // We need to scroll first, so that the visible range is up to date (even though this
         // should not make a difference when the view is currently animating).
         let stable_top_in_screen_view = screen.visible_row_to_stable_row(0);
-        if !alt_screen_active && stable_top_in_screen_view != self.current_stable_top_primary {
-            let scroll_amount = stable_top_in_screen_view - self.current_stable_top_primary;
-            if scroll_amount != 0 {
-                view.scroll(scroll_amount);
-            }
-            self.current_stable_top_primary = stable_top_in_screen_view;
-        }
+        view.scroll_to(stable_top_in_screen_view);
 
         // Get the stable view range from the view. It can't be computed here, because of the
         // animation range.
@@ -87,9 +120,8 @@ impl TerminalState {
             // correct range of updated lines (which it doesn't if lines are requested outside of
             // its scrollback buffer).
 
-            let current_terminal_stable_phys_range = self
-                .current_stable_top_primary
-                .with_len(screen.physical_rows);
+            let current_terminal_stable_phys_range =
+                stable_top_in_screen_view.with_len(screen.physical_rows);
 
             if !current_terminal_stable_phys_range.intersects(&view_stable_range) {
                 debug!("Resetting scrolling animation (terminal view is far away from ours)");
@@ -99,7 +131,7 @@ impl TerminalState {
 
             info!(
                 "View's stable range: {view_stable_range:?}, current top: {}",
-                self.current_stable_top_primary
+                view.scroll_offset()
             );
         }
 
@@ -206,9 +238,6 @@ impl TerminalState {
 
     pub fn visible_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
         // Bug: What about secondary screen?
-        SelectionPos::new(
-            vis_cell.0,
-            vis_cell.1 as isize + self.current_stable_top_primary,
-        )
+        SelectionPos::new(vis_cell.0, vis_cell.1 as isize + self.view.scroll_offset())
     }
 }
