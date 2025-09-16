@@ -3,14 +3,15 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use log::{debug, info};
 use massive_input::Progress;
 
 use crate::{
     Panel, WindowState,
+    range_tools::{RangeTools, WithLength},
     selection::{Selection, SelectionPos},
 };
 use massive_scene::Scene;
-use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{CursorPosition, Line, StableRowIndex, Terminal};
 
@@ -19,7 +20,7 @@ pub struct TerminalState {
     pub last_rendered_seq_no: SequenceNo,
     // For scroll detection. Primary screen only.
     pub current_stable_top_primary: StableRowIndex,
-    line_buf: Vec<Line>,
+    temporary_line_buf: Vec<Line>,
     selection: Selection,
 }
 
@@ -28,12 +29,12 @@ impl TerminalState {
         Self {
             last_rendered_seq_no,
             current_stable_top_primary: 0,
-            line_buf: Vec::new(),
+            temporary_line_buf: Vec::new(),
             selection: Default::default(),
         }
     }
 
-    /// Update the panel lines and the cursor.
+    /// Update the panel lines, cursor, and selection.
     pub fn update(
         &mut self,
         terminal: &Arc<Mutex<Terminal>>,
@@ -50,89 +51,115 @@ impl TerminalState {
         let current_seq_no = terminal.current_seqno();
         let terminal_updated = current_seq_no > self.last_rendered_seq_no;
         assert!(current_seq_no >= self.last_rendered_seq_no);
-        let mut scroll_amount = 0;
-        let stable_top = screen.visible_row_to_stable_row(0);
-        let mut set = RangeSet::new();
 
-        if terminal_updated {
-            // Physical: 0: The first line at the beginning of the scrollback buffer. The first
-            // line stored in the lines of the screen.
-            //
-            // Stable: 0: The first line of the initial output. A scrolling line stays at the
-            // same index. Would be equal to physical if the scrollback buffer would be
-            // infinite.
-            //
-            // Visible: 0: Top of the screen.
+        // Physical: 0: The first line at the beginning of the scrollback buffer. The first
+        // line stored in the lines of the screen.
+        //
+        // Stable: 0: The first line of the initial output. A scrolling line stays at the
+        // same index. Would be equal to physical if the scrollback buffer would be
+        // infinite.
+        //
+        // Visible: 0: Top of the screen.
 
-            if !alt_screen_active && stable_top != self.current_stable_top_primary {
-                scroll_amount = stable_top - self.current_stable_top_primary;
-                self.current_stable_top_primary = stable_top;
+        // We need to scroll first, so that the visible range is up to date (even though this
+        // should not make a difference when the panel is currently animating).
+        let stable_top_in_screen_view = screen.visible_row_to_stable_row(0);
+        if !alt_screen_active && stable_top_in_screen_view != self.current_stable_top_primary {
+            let scroll_amount = stable_top_in_screen_view - self.current_stable_top_primary;
+            if scroll_amount != 0 {
+                panel.scroll(scroll_amount);
+            }
+            self.current_stable_top_primary = stable_top_in_screen_view;
+        }
+
+        // Get the stable view range from the panel. It can't be computed here, because of the
+        // animation range.
+        let mut view_stable_range;
+        {
+            view_stable_range = panel.view_range(screen.physical_rows);
+
+            // If the view's stable range is out of range compared to the final view, it means that
+            // scrolling lags behind at least one screen. In this case, reset scrolling and get a
+            // new view_range.
+            //
+            // Detail: As a side effect, this also makes sure that the terminal always returns a
+            // correct range of updated lines (which it doesn't if lines are requested outside of
+            // its scrollback buffer).
+
+            let current_terminal_stable_phys_range = self
+                .current_stable_top_primary
+                .with_len(screen.physical_rows);
+
+            if !current_terminal_stable_phys_range.intersects(&view_stable_range) {
+                debug!("Resetting scrolling animation (terminal view is far away from ours)");
+                panel.reset_animations();
+                view_stable_range = panel.view_range(screen.physical_rows)
             }
 
-            let view_stable_range = stable_top..stable_top + screen.physical_rows as isize;
+            info!(
+                "View stable range (panel's view): {view_stable_range:?}, current top: {}",
+                self.current_stable_top_primary
+            );
+        }
 
-            // Production: Add a kind of view into the stable rows?
-            let lines_changed_stable =
-                screen.get_changed_stable_rows(view_stable_range, self.last_rendered_seq_no);
+        // Set up the lines to update with the ones the panel requests explicitly (For example
+        // caused through scrolling).
+        let mut lines_to_update = panel.update_view_range(scene, view_stable_range.clone());
 
-            lines_changed_stable.into_iter().for_each(|l| set.add(l));
+        // Extend the range by the lines that have actually changed in the view range.
+        let lines_changed_stable = if terminal_updated {
+            screen.get_changed_stable_rows(view_stable_range.clone(), self.last_rendered_seq_no)
+        } else {
+            Vec::new()
+        };
 
-            // ADR: Decided to keep the time we lock the Terminal as short as possible, so that new data
-            // can be fed in as fast as possible.
+        lines_changed_stable.into_iter().for_each(|l| {
+            debug_assert!(view_stable_range.contains(&l));
+            lines_to_update.add(l)
+        });
 
-            for stable_range in set.iter() {
-                let phys_range = screen.stable_range(stable_range);
-                assert!(stable_range.start >= stable_top);
-                // let visible_range_start = stable_range.start - stable_top;
+        for stable_range in lines_to_update.iter() {
+            let phys_range = screen.stable_range(stable_range);
+            // Performance: After a terminal `clear`, _all_ lines below the cursor are
+            // invalidated for some reason (there _is_ a `SequenceNo` for every line, may be
+            // there is a way to find out if the lines actually have changed).
 
-                // Architecture: Going through building a set for accessing each changed line
-                // individually does not actually make sense when we just need to access Line
-                // references, but we can't access them directly.
-                //
-                // **Update**: Currently, it does make sense because of locking FontSystem only once
-                // (but hey, this could also be bad).
-                //
-                // Performance: After a terminal `clear`, all lines below the cursor are
-                // invalidated, too for some reason (there _is_ a `SequenceNo` for every line, may
-                // be there is a way to find out if the lines actually have changed).
-
-                screen.with_phys_lines(phys_range, |lines| {
-                    // This is guaranteed to be called only once for all lines.
-                    self.line_buf.extend(lines.iter().copied().cloned());
-                    // r = panel.update_lines(scene, visible_range_start as usize, lines);
-                });
-            }
+            screen.with_phys_lines(phys_range, |lines| {
+                // This is guaranteed to be called only once for all lines.
+                self.temporary_line_buf
+                    .extend(lines.iter().copied().cloned());
+            });
         }
 
         let cursor_pos = terminal.cursor_pos();
 
-        // Release the terminal lock.
+        // ADR: Decided to keep the time we lock the Terminal as short as possible, so that terminal
+        // changes can be produced as fast as possible.
         drop(terminal);
 
-        if scroll_amount != 0 {
-            panel.scroll(scroll_amount);
-        }
-
         // Push the lines to the panel.
-
         let mut lines_index = 0;
-        for stable_range in set.iter() {
-            let visible_range_start = stable_range.start - stable_top;
+        for stable_range in lines_to_update.iter() {
             let lines_count = stable_range.len();
 
             panel.update_lines(
-                scene,
-                visible_range_start as usize,
-                &self.line_buf[lines_index..lines_index + lines_count],
+                stable_range.start,
+                &self.temporary_line_buf[lines_index.with_len(lines_count)],
             )?;
 
             lines_index += lines_count;
         }
-        self.line_buf.clear();
+        self.temporary_line_buf.clear();
+
+        // Update cursor and selection
 
         Self::update_cursor(cursor_pos, panel, window_state.focused, scene);
 
-        panel.update_selection(scene, self.selection.range(), &window_state.terminal);
+        panel.update_selection(
+            scene,
+            self.selection.range(),
+            &window_state.terminal_geometry,
+        );
 
         // Commit
 

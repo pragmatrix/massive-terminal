@@ -2,15 +2,15 @@ use std::{
     io::{self, ErrorKind},
     ops::Range,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
+use log::info;
 use tokio::{pin, select, sync::Notify, task};
-use tracing::info;
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton, WindowEvent},
@@ -24,23 +24,26 @@ use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConf
 use massive_geometry::{Camera, Color, Identity};
 use massive_input::{EventManager, ExternalEvent, Movement};
 use massive_scene::{Handle, Location, Matrix, Scene};
-use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellWindow, shell};
+use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellEvent, ShellWindow, shell};
 
-mod geometry;
 mod input;
 mod logical_line;
 mod panel;
+mod range_tools;
 mod selection;
 mod terminal_font;
+mod terminal_geometry;
+mod terminal_scroller;
 mod terminal_state;
+mod window_geometry;
 mod window_state;
 
 pub use panel::*;
 pub use terminal_font::*;
 
 use crate::{
-    geometry::{PixelPoint, TerminalGeometry, WindowGeometry},
-    logical_line::LogicalLine,
+    logical_line::LogicalLine, terminal_geometry::TerminalGeometry,
+    terminal_scroller::TerminalScroller, window_geometry::WindowGeometry,
     window_state::WindowState,
 };
 
@@ -79,6 +82,8 @@ struct MassiveTerminal {
 
     window_state: WindowState,
     terminal_state: TerminalState,
+    // Architecture: This may belong into TerminalState or even Panel?
+    terminal_scroller: TerminalScroller,
 
     // User state
     selecting: Option<Movement>,
@@ -144,7 +149,7 @@ impl MassiveTerminal {
         let pty_system = native_pty_system();
 
         // Create a new pty
-        let pty_pair = pty_system.openpty(window_geometry.terminal.pty_size())?;
+        let pty_pair = pty_system.openpty(window_geometry.terminal_geometry.pty_size())?;
 
         let cmd = CommandBuilder::new_default_prog();
 
@@ -159,7 +164,7 @@ impl MassiveTerminal {
         let configuration = MassiveTerminalConfiguration {};
 
         let terminal = Terminal::new(
-            window_geometry.terminal.wezterm_terminal_size(),
+            window_geometry.terminal_geometry.wezterm_terminal_size(),
             Arc::new(configuration),
             TERMINAL_NAME,
             TERMINAL_VERSION,
@@ -179,10 +184,13 @@ impl MassiveTerminal {
         let panel = Panel::new(
             font_system,
             terminal_font,
-            window_geometry.terminal.rows(),
+            context.timeline(0.0),
             panel_location,
             &scene,
         );
+
+        let terminal_scroller =
+            TerminalScroller::new(&context, Duration::from_secs(1), Duration::from_secs(1));
 
         Ok(Self {
             context,
@@ -196,6 +204,7 @@ impl MassiveTerminal {
             event_manager: EventManager::default(),
             window_state: WindowState::new(window_geometry),
             terminal_state: TerminalState::new(last_rendered_seq_no),
+            terminal_scroller,
             selecting: None,
             clipboard: Clipboard::new()?,
         })
@@ -225,20 +234,43 @@ impl MassiveTerminal {
                 }
             };
 
-            if let Some(event) = &shell_event_opt
-                && let Some(window_event) = event.window_event_for(&self.window)
+            // We have to process window events before going into the update cycle for now because
+            // of the borrow checker.
+            //
+            // Detail: Animations starting here _are_ considered, but not updates.
+            if let Some(shell_event) = &shell_event_opt
+                && let Some(window_event) = shell_event.window_event_for(&self.window)
             {
                 self.process_window_event(self.window.id(), window_event)?;
             }
 
-            // Performance: We begin an update cycle whenever the terminal advances. This should
-            // probably be done asynchronously, deferred, etc. But note that the renderer is also
-            // running asynchronously at the end of the update cycle.
+            // Performance: We begin an update cycle whenever the terminal advances, too. This
+            // should probably be done asynchronously, deferred, etc. But note that the renderer is
+            // also running asynchronously at the end of the update cycle.
             let _cycle = self.context.begin_update_cycle(
                 &self.scene,
                 &mut self.renderer,
                 shell_event_opt.as_ref(),
             )?;
+
+            // Architecture: We need to enforce running animations _inside_ the update cycle
+            // somehow. Otherwise this can lead to confusing bugs, for example if the following code
+            // does run before begin_update_cycle().
+            //
+            // Idea: Make shell_event opaque and allow checking for animations update in UpdateCycle
+            // that is returned from begin_update_cycle()?
+            if matches!(shell_event_opt, Some(ShellEvent::ApplyAnimations)) {
+                info!("Applying animations");
+                self.terminal_scroller.proceed();
+            }
+
+            // Currently we need always apply panel animations, otherwise the scroll matrix is not
+            // in sync with the updated lines which results in flickering while scrolling (i.e.
+            // lines disappearing too early when scrolling up).
+            //
+            // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
+            // concept.
+            self.panel.apply_animations();
 
             {
                 // Update lines & cursor
@@ -293,27 +325,52 @@ impl MassiveTerminal {
 
         // Process selecting user state
 
-        if let Some(selecting) = &mut self.selecting {
-            if let Some(progress) = selecting.track_to(&ev)
-                && let Some(progress) = progress.try_map(|to| {
-                    let panel_hit = self.hit_test_panel((to.x, to.y).into())?;
-                    self.panel_to_cell(panel_hit)
-                })
-            {
-                assert!(self.terminal_state.selection_can_progress());
-                self.terminal_state.selection_progress(progress);
-                if progress.ends() {
-                    self.selecting = None;
+        let hit_test_panel = |p| {
+            self.renderer
+                .geometry()
+                .unproject_to_model_z0(p, &self.panel_matrix.value())
+                .map(|p| (p.x, p.y).into())
+        };
+
+        let panel_to_cell =
+            |panel_hit| self.window_state.terminal_geometry.panel_to_cell(panel_hit);
+
+        match &mut self.selecting {
+            None => {
+                if let Some(movement) = ev.detect_movement(MouseButton::Left, min_movement_distance)
+                    && let Some(cell_hit) = hit_test_panel(movement.from).and_then(panel_to_cell)
+                {
+                    self.terminal_state.selection_begin(cell_hit);
+                    self.selecting = Some(movement);
                 }
             }
-        } else if let Some(movement) = ev.detect_movement(MouseButton::Left, min_movement_distance)
-        {
-            let from = movement.from;
-            if let Some(panel_hit) = self.hit_test_panel((from.x, from.y).into())
-                && let Some(cell_hit) = self.panel_to_cell(panel_hit)
-            {
-                self.terminal_state.selection_begin(cell_hit);
-                self.selecting = Some(movement);
+            Some(movement) => {
+                if let Some(progress) = movement.track_to(&ev) {
+                    let progress = progress.map_or_cancel(hit_test_panel);
+
+                    // Scroll?
+                    if let Some(panel_hit) = progress.proceeds() {
+                        let scroll = self
+                            .window_state
+                            .terminal_geometry
+                            .scroll_distance(*panel_hit);
+                        if let Some(scroll) = scroll {
+                            self.terminal_scroller.set_velocity(scroll);
+                        }
+                    }
+
+                    // Map to selection.
+                    // Robustness: Should we support negative cell hits, so that the selection can always progress here?
+
+                    if let Some(cell_progress) = progress.try_map(panel_to_cell) {
+                        assert!(self.terminal_state.selection_can_progress());
+                        self.terminal_state.selection_progress(cell_progress);
+                    }
+
+                    if progress.ends() {
+                        self.selecting = None;
+                    }
+                }
             }
         }
 
@@ -355,17 +412,27 @@ impl MassiveTerminal {
     }
 
     fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {
-        let current_size = self.window_state.geometry.terminal.terminal_cell_size;
+        let current_size = self
+            .window_state
+            .geometry
+            .terminal_geometry
+            .terminal_cell_size;
 
         // First the geometry.
         self.window_state.geometry.resize(new_window_size_px);
 
-        if self.window_state.geometry.terminal.terminal_cell_size == current_size {
+        if self
+            .window_state
+            .geometry
+            .terminal_geometry
+            .terminal_cell_size
+            == current_size
+        {
             return Ok(());
         }
 
         // Then we go bottom up.
-        let terminal = &self.window_state.terminal;
+        let terminal = &self.window_state.terminal_geometry;
 
         self.pty_pair.master.resize(terminal.pty_size())?;
 
@@ -374,44 +441,7 @@ impl MassiveTerminal {
             .unwrap()
             .resize(terminal.wezterm_terminal_size());
 
-        self.panel.resize(terminal.rows(), &self.scene);
-
         Ok(())
-    }
-
-    fn hit_test_panel(&mut self, pos_px: PixelPoint) -> Option<PixelPoint> {
-        let hit = self
-            .renderer
-            .geometry()
-            .unproject_to_model_z0(pos_px.into(), &self.panel_matrix.value())?;
-
-        Some((hit.x, hit.y).into())
-    }
-
-    /// The cell for a particular pixel coordinate in the pixel space of the panel.
-    fn panel_to_cell(&self, panel_px: PixelPoint) -> Option<(usize, usize)> {
-        let (x, y) = panel_px.into();
-
-        let geometry = &self.window_state.geometry;
-        let (panel_px_w, panel_px_h) = geometry.inner_size_px();
-        let (panel_px_w, panel_px_h) = (panel_px_w as f64, panel_px_h as f64);
-
-        if x < 0.0 || y < 0.0 || x >= panel_px_w || y >= panel_px_h {
-            return None;
-        }
-
-        let (cell_w, cell_h) = {
-            let (cw, ch) = geometry.terminal.cell_size_px; // field access
-            (cw as f64, ch as f64)
-        };
-
-        if cell_w <= 0.0 || cell_h <= 0.0 {
-            return None;
-        }
-
-        let col = (x / cell_w).floor() as usize;
-        let row = (y / cell_h).floor() as usize;
-        Some((col, row))
     }
 
     fn min_pixel_distance_considered_movement(&self) -> f64 {
