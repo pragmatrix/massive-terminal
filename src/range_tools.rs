@@ -46,6 +46,6 @@ impl<T: Integer + Copy + Debug> WithLength for T {
         T: TryFrom<Len>,
         T::Error: Debug,
     {
-        self..self + T::try_from(length).unwrap()
+        self..self + T::try_from(length).expect("Failed to convert length to range element type")
     }
 }
