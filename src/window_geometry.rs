@@ -1,4 +1,4 @@
-use crate::terminal_geometry::TerminalGeometry;
+use crate::terminal::TerminalGeometry;
 
 // euclid definitions
 

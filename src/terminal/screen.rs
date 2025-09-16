@@ -27,11 +27,11 @@ use massive_geometry::{Identity, Point, Rect, Size};
 use massive_scene::{Handle, Location, Matrix, Scene, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 
+use super::TerminalGeometry;
 use crate::{
     TerminalFont,
     range_tools::{RangeTools, WithLength},
     selection::{NormalizedSelectionRange, SelectionRange},
-    terminal_geometry::TerminalGeometry,
     window_geometry::CellRect,
 };
 
@@ -47,7 +47,7 @@ const SCROLL_DURATION: Duration = Duration::from_millis(100);
 /// Naming: ScreenRenderer? ScreenVisuals, TerminalScreen, because now this corresponds to a
 /// terminal screen.
 #[derive(Debug)]
-pub struct Panel {
+pub struct TerminalScreen {
     font_system: Arc<Mutex<FontSystem>>,
     /// The terminal font.
     font: TerminalFont,
@@ -82,7 +82,7 @@ pub struct Panel {
     selection: Option<Handle<Visual>>,
 }
 
-impl Panel {
+impl TerminalScreen {
     /// Create a new panel.
     ///
     /// Scene is needed to pre-create all the rows. This in turn prevents us from caring too much
@@ -120,7 +120,7 @@ impl Panel {
 
 // Lines
 
-impl Panel {
+impl TerminalScreen {
     /// Scroll all lines by delta lines.
     ///
     /// Positive: moves all lines up, negative moves all lines down. This makes sure that empty
@@ -478,7 +478,7 @@ enum BasicCursorShape {
 
 // Cursor
 
-impl Panel {
+impl TerminalScreen {
     pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, window_focused: bool) {
         match pos.visibility {
             CursorVisibility::Hidden => {
@@ -553,7 +553,7 @@ impl Panel {
 
 // Selection
 
-impl Panel {
+impl TerminalScreen {
     pub fn update_selection(
         &mut self,
         scene: &Scene,

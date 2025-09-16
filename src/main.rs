@@ -18,7 +18,6 @@ use winit::{
 };
 
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
-use terminal_state::TerminalState;
 use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConfiguration, color};
 
 use massive_geometry::{Camera, Color, Identity};
@@ -28,22 +27,14 @@ use massive_shell::{ApplicationContext, AsyncWindowRenderer, ShellEvent, ShellWi
 
 mod input;
 mod logical_line;
-mod panel;
 mod range_tools;
 mod selection;
-mod terminal_font;
-mod terminal_geometry;
-mod terminal_scroller;
-mod terminal_state;
+mod terminal;
 mod window_geometry;
 mod window_state;
 
-pub use panel::*;
-pub use terminal_font::*;
-
 use crate::{
-    logical_line::LogicalLine, terminal_geometry::TerminalGeometry,
-    terminal_scroller::TerminalScroller, window_geometry::WindowGeometry,
+    logical_line::LogicalLine, terminal::*, window_geometry::WindowGeometry,
     window_state::WindowState,
 };
 
@@ -75,7 +66,7 @@ struct MassiveTerminal {
     terminal: Arc<Mutex<Terminal>>,
 
     scene: Scene,
-    panel: Panel,
+    panel: TerminalScreen,
     panel_matrix: Handle<Matrix>,
 
     event_manager: EventManager,
@@ -181,7 +172,7 @@ impl MassiveTerminal {
             matrix: panel_matrix.clone(),
         });
 
-        let panel = Panel::new(
+        let panel = TerminalScreen::new(
             font_system,
             terminal_font,
             context.timeline(0.0),

@@ -7,7 +7,7 @@ use log::{debug, info};
 use massive_input::Progress;
 
 use crate::{
-    Panel, WindowState,
+    TerminalScreen, WindowState,
     range_tools::{RangeTools, WithLength},
     selection::{Selection, SelectionPos},
 };
@@ -39,7 +39,7 @@ impl TerminalState {
         &mut self,
         terminal: &Arc<Mutex<Terminal>>,
         window_state: &WindowState,
-        panel: &mut Panel,
+        panel: &mut TerminalScreen,
         scene: &Scene,
     ) -> Result<()> {
         let terminal = terminal.lock().unwrap();
@@ -172,7 +172,7 @@ impl TerminalState {
     // Architecture: Not sure where this belongs to.
     pub fn update_cursor(
         cursor_pos: CursorPosition,
-        panel: &mut Panel,
+        panel: &mut TerminalScreen,
         focused: bool,
         scene: &Scene,
     ) {
