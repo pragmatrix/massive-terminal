@@ -173,11 +173,11 @@ impl MassiveTerminal {
             matrix: view_matrix.clone(),
         });
 
-        let view_gen = move |scene: &Scene| {
+        let view_gen = move |scene: &Scene, scroll_offset| {
             TerminalView::new(
                 font_system.clone(),
                 terminal_font.clone(),
-                scene.timeline(0.0),
+                scroll_offset,
                 view_location.clone(),
                 scene,
             )
