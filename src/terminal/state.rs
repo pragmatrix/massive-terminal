@@ -42,7 +42,6 @@ impl TerminalState {
             temporary_line_buf: Vec::new(),
 
             selection: Default::default(),
-            // view_gen: Box::new(view_gen),
             view,
             alt_screen_active: false,
         }
