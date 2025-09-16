@@ -20,7 +20,7 @@ pub struct WindowGeometry {
     /// Padding around the terminal in physical pixels.
     padding_px: u32,
 
-    // Architecture: Even thogh the WindowGeometry is built from the terminal's geometry, this does not belong here.
+    // Architecture: Even though the WindowGeometry is built from the terminal's geometry, this does not belong here.
     pub terminal_geometry: TerminalGeometry,
 }
 
