@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use cosmic_text::Font;
 
 /// A monospaced, terminal font of a certain size.
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct TerminalFont {
     pub font: Arc<Font>,

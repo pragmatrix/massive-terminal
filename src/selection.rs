@@ -157,12 +157,6 @@ impl SelectionRange {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Deref)]
 pub struct NormalizedSelectionRange(SelectionRange);
 
-impl NormalizedSelectionRange {
-    pub fn is_empty(&self) -> bool {
-        self.0.start == self.0.end
-    }
-}
-
 fn column_range(from: usize, to: usize) -> Range<usize> {
     if to >= from {
         from..to + 1

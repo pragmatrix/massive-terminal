@@ -4,6 +4,7 @@ use std::time::Duration;
 use massive_animation::{Interpolation, Timeline};
 use massive_shell::ApplicationContext;
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct TerminalScroller {
     /// The duration until we reach the final scrolling speed.
@@ -20,6 +21,7 @@ pub struct TerminalScroller {
     state: ScrollAnimationState,
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 enum ScrollAnimationState {
     NoScrolling,
@@ -27,6 +29,7 @@ enum ScrollAnimationState {
     PhasingOut,
 }
 
+#[allow(unused)]
 impl TerminalScroller {
     // Gorilla: ApplicationContext
     pub fn new(
