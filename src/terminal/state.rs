@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use derive_more::Debug;
 use log::{debug, info, trace};
-use massive_shell::Scene;
+
+use termwiz::surface::SequenceNo;
+use wezterm_term::{Line, StableRowIndex, Terminal};
 
 use crate::{
     TerminalView, WindowState,
@@ -14,8 +16,7 @@ use crate::{
     selection::{Selection, SelectionPos},
 };
 use massive_input::Progress;
-use termwiz::surface::SequenceNo;
-use wezterm_term::{Line, StableRowIndex, Terminal};
+use massive_shell::Scene;
 
 #[derive(Debug)]
 pub struct TerminalState {
@@ -166,8 +167,8 @@ impl TerminalState {
 
         let cursor_pos = terminal.cursor_pos();
 
-        // ADR: Decided to keep the time we lock the Terminal as short as possible, so that terminal
-        // changes can be produced as fast as possible.
+        // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
+        // changes can be pushed to it as fast as possible.
         drop(terminal);
 
         // Push the lines to the view.
