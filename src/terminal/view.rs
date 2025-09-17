@@ -624,7 +624,7 @@ impl TerminalView {
 // Selection
 
 impl TerminalView {
-    pub fn update_selection(
+    fn update_selection(
         &mut self,
         scene: &Scene,
         selection: Option<NormalizedSelectionRange>,
