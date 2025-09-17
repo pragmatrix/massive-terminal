@@ -1,6 +1,5 @@
 use std::{
     collections::VecDeque,
-    iter,
     ops::Range,
     sync::{Arc, Mutex},
     time::Duration,
@@ -25,13 +24,14 @@ use wezterm_term::{CursorPosition, Intensity, Line, StableRowIndex, color::Color
 use super::TerminalGeometry;
 use crate::{
     TerminalFont,
-    range_tools::{RangeTools, WithLength},
+    range_ops::{RangeOps, WithLength},
     selection::{NormalizedSelectionRange, SelectionRange},
+    terminal::scroll_locations::ScrollLocations,
     window_geometry::CellRect,
 };
 use massive_animation::{Interpolation, Timeline};
-use massive_geometry::{Identity, Point, Rect, Size};
-use massive_scene::{Handle, Location, Matrix, Visual};
+use massive_geometry::{Point, Rect, Size};
+use massive_scene::{Handle, Location, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 use massive_shell::Scene;
 
@@ -53,11 +53,7 @@ pub struct TerminalView {
     font: TerminalFont,
     color_palette: ColorPalette,
 
-    /// The matrix all visuals are transformed with.
-    ///
-    /// This effectively moves all lines _only_ up.
-    scroll_matrix: Handle<Matrix>,
-    scroll_location: Handle<Location>,
+    locations: ScrollLocations,
 
     /// Positive scroll offset of the screen.
     scroll_offset: StableRowIndex,
@@ -77,9 +73,23 @@ pub struct TerminalView {
     /// No lines for the scrollback. And if we are _inside_ the scrollback buffer, no lines below.
     ///
     /// VecDeque because we want to optimize them for scrolling.
-    lines: VecDeque<Handle<Visual>>,
+    lines: VecDeque<LineVisual>,
     cursor: Option<Handle<Visual>>,
-    selection: Option<Handle<Visual>>,
+    selection: Option<SelectionVisual>,
+}
+
+#[derive(Debug)]
+struct LineVisual {
+    /// The visual representing the line.
+    visual: Handle<Visual>,
+    /// The top offset to add to all shapes.
+    top_offset: u64,
+}
+
+#[derive(Debug)]
+struct SelectionVisual {
+    row_range: Range<StableRowIndex>,
+    visual: Handle<Visual>,
 }
 
 impl TerminalView {
@@ -92,26 +102,21 @@ impl TerminalView {
         font_system: Arc<Mutex<FontSystem>>,
         font: TerminalFont,
         scroll_offset: isize,
-        location: Handle<Location>,
+        parent_location: Handle<Location>,
         scene: &Scene,
     ) -> Self {
-        let scroll_matrix = scene.stage(Matrix::identity());
-
-        let scroll_location = scene.stage(Location {
-            parent: Some(location),
-            matrix: scroll_matrix.clone(),
-        });
-
-        let scroll_offset_px = (scroll_offset as i64 * font.cell_size_px().1 as i64) as f64;
+        let line_height = font.cell_size_px().1;
+        assert!(scroll_offset >= 0);
+        let scroll_offset_px = scroll_offset as u64 * line_height as u64;
+        let locations = ScrollLocations::new(parent_location, line_height, scroll_offset_px);
 
         Self {
             font_system,
             font,
             color_palette: ColorPalette::default(),
+            locations,
             scroll_offset,
-            scroll_offset_px: scene.timeline(scroll_offset_px),
-            scroll_matrix,
-            scroll_location,
+            scroll_offset_px: scene.timeline(scroll_offset_px as f64),
             first_line_stable_index: 0,
             lines: VecDeque::new(),
             cursor: None,
@@ -171,8 +176,7 @@ impl TerminalView {
             "Updating scroll offset: {scroll_offset_px} (apx line: {})",
             scroll_offset_px / self.line_height_px() as f64
         );
-        self.scroll_matrix
-            .update(Matrix::from_translation((0., -scroll_offset_px, 0.).into()));
+        self.locations.set_scroll_offset_px(scroll_offset_px as u64);
     }
 
     /// Return the stable range of all the lines we need to update for the stable_range given in the
@@ -209,19 +213,25 @@ impl TerminalView {
         scene: &Scene,
         view_range: Range<StableRowIndex>,
     ) -> RangeSet<StableRowIndex> {
+        // Update the range of matrices we need upfront.
+        // Missing: This is incorrect, needs to include selection and cursor.
+        // self.locations.mark_used(view_range.clone());
+
         let mut required_line_updates = RangeSet::new();
 
         assert!(view_range.end > view_range.start);
         let current_range = self.first_line_stable_index.with_len(self.lines.len());
 
-        let new_visual = || scene.stage(Visual::new(self.scroll_location.clone(), []));
+        let mut new_visual = |stable_index| {
+            let (location, top_offset) = self.locations.acquire_line_location(scene, stable_index);
+            let visual = scene.stage(Visual::new(location, []));
+            LineVisual { visual, top_offset }
+        };
 
-        if view_range.end <= current_range.start || view_range.start >= current_range.end {
+        if !view_range.intersects(&current_range) {
             // Non-overlapping: reset completely.
             self.first_line_stable_index = view_range.start;
-            self.lines = iter::repeat_with(new_visual)
-                .take(view_range.len())
-                .collect();
+            self.lines = view_range.clone().map(new_visual).collect();
             required_line_updates.add_range(view_range);
             return required_line_updates;
         }
@@ -237,11 +247,11 @@ impl TerminalView {
                 self.first_line_stable_index += to_remove;
             }
             _ if top_delta < 0 => {
-                let to_add = -top_delta;
-                for _ in 0..to_add {
-                    self.lines.push_front(new_visual());
-                }
-                self.first_line_stable_index -= to_add;
+                let range = view_range.start..current_range.start;
+                range.rev().for_each(|stable_index| {
+                    self.lines.push_front(new_visual(stable_index));
+                });
+                self.first_line_stable_index = view_range.start;
                 required_line_updates.add_range(view_range.start..current_range.start);
             }
             _ => {}
@@ -250,10 +260,9 @@ impl TerminalView {
         let bottom_delta = view_range.end - current_range.end;
         match bottom_delta {
             _ if bottom_delta > 0 => {
-                let to_add = bottom_delta as usize;
-                self.lines
-                    .extend(iter::repeat_with(new_visual).take(to_add));
-                required_line_updates.add_range(current_range.end..view_range.end);
+                let new_lines = current_range.end..view_range.end;
+                self.lines.extend(new_lines.clone().map(new_visual));
+                required_line_updates.add_range(new_lines);
             }
             _ if bottom_delta < 0 => {
                 let to_remove = (-bottom_delta) as usize;
@@ -262,7 +271,7 @@ impl TerminalView {
             _ => {}
         }
 
-        assert_eq!(
+        debug_assert_eq!(
             view_range,
             self.first_line_stable_index.with_len(self.lines.len())
         );
@@ -281,22 +290,19 @@ impl TerminalView {
             bail!("Internal error: Updated lines {update_range:?} is not inside {lines_range:?}");
         }
 
-        let line_height_px = self.line_height_px();
-
         for (i, line) in lines.iter().enumerate() {
-            // Place shapes at their stable (non-animated) vertical position.
-            let top = (first_line_stable_index + i as isize) as i64 * line_height_px;
+            let line_index =
+                (update_range.start - self.first_line_stable_index + i as isize) as usize;
+
+            let top = self.lines[line_index].top_offset;
             let shapes = {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
                 let mut font_system = self.font_system.lock().unwrap();
-                self.line_to_shapes(&mut font_system, top, line)?
+                self.line_to_shapes(&mut font_system, top as i64, line)?
             };
 
-            let line_index =
-                (update_range.start - self.first_line_stable_index + i as isize) as usize;
-
-            self.lines[line_index].update_with(|v| {
+            self.lines[line_index].visual.update_with(|v| {
                 v.shapes = shapes.into();
             });
         }
@@ -473,7 +479,7 @@ fn cluster_background(
 
 // Cursor
 
-enum BasicCursorShape {
+enum CursorShapeType {
     Rect,
     Block,
     Underline,
@@ -489,66 +495,70 @@ impl TerminalView {
                 self.cursor = None;
             }
             CursorVisibility::Visible => {
-                let basic_shape = Self::basic_cursor_shape(pos.shape, window_focused);
-                let shape = self.cursor_shape(basic_shape, pos);
-                let visual = Visual::new(self.scroll_location.clone(), [shape]);
-                self.cursor = Some(scene.stage(visual));
+                let shape_type = Self::cursor_shape_type(pos.shape, window_focused);
+                // Detail: pos.y is a VisibleRowIndex.
+                let cursor_stable_line = pos.y as isize + self.scroll_offset;
+                let (location, top_px) = self
+                    .locations
+                    .acquire_line_location(scene, cursor_stable_line);
+                let shape = self.cursor_shape(shape_type, pos.x, top_px);
+                self.cursor = Some(scene.stage(Visual::new(location, [shape])));
             }
         }
     }
 
-    fn basic_cursor_shape(shape: CursorShape, focused: bool) -> BasicCursorShape {
+    fn cursor_shape_type(shape: CursorShape, focused: bool) -> CursorShapeType {
         if !focused {
-            return BasicCursorShape::Rect;
+            return CursorShapeType::Rect;
         }
         match shape {
             // Feature: Make default cursor configurable.
-            CursorShape::Default => BasicCursorShape::Block,
-            CursorShape::BlinkingBlock => BasicCursorShape::Block,
-            CursorShape::SteadyBlock => BasicCursorShape::Block,
-            CursorShape::BlinkingUnderline => BasicCursorShape::Underline,
-            CursorShape::SteadyUnderline => BasicCursorShape::Underline,
-            CursorShape::BlinkingBar => BasicCursorShape::Bar,
-            CursorShape::SteadyBar => BasicCursorShape::Bar,
+            CursorShape::Default => CursorShapeType::Block,
+            CursorShape::BlinkingBlock => CursorShapeType::Block,
+            CursorShape::SteadyBlock => CursorShapeType::Block,
+            CursorShape::BlinkingUnderline => CursorShapeType::Underline,
+            CursorShape::SteadyUnderline => CursorShapeType::Underline,
+            CursorShape::BlinkingBar => CursorShapeType::Bar,
+            CursorShape::SteadyBar => CursorShapeType::Bar,
         }
     }
 
-    fn cursor_shape(&self, shape: BasicCursorShape, pos: CursorPosition) -> Shape {
+    fn cursor_shape(&self, ty: CursorShapeType, column: usize, top_px: u64) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font.cell_size_px();
-        let left = cell_size.0 * pos.x as u32;
-        // pos is screen relative, but we do attach the cursor visual to the scroll matrix, so have
-        // to add scroll offset here.
-        // Precision: This may get very large, so u64.
-        let top = self.scroll_offset_px.final_value().round() as u64
-            + (cell_size.1 as u64 * pos.y as u64);
+        let left = cell_size.0 * column as u32;
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
         // position / thickness, not from the cell size.
         let stroke_thickness = ((cell_size.0 as f64 / 4.) + 1.).trunc();
 
-        let rect = match shape {
-            BasicCursorShape::Rect => {
+        let rect = match ty {
+            CursorShapeType::Rect => {
                 return StrokeRect::new(
-                    Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _)),
+                    Rect::new(
+                        (left as _, top_px as _),
+                        (cell_size.0 as _, cell_size.1 as _),
+                    ),
                     Size::new(stroke_thickness, stroke_thickness),
                     color::from_srgba(cursor_color),
                 )
                 .into();
             }
-            BasicCursorShape::Block => {
-                Rect::new((left as _, top as _), (cell_size.0 as _, cell_size.1 as _))
-            }
-            BasicCursorShape::Underline => Rect::new(
+            CursorShapeType::Block => Rect::new(
+                (left as _, top_px as _),
+                (cell_size.0 as _, cell_size.1 as _),
+            ),
+            CursorShapeType::Underline => Rect::new(
                 (
                     left as _,
-                    ((top + self.font.ascender_px as u64) as f64) as _,
+                    ((top_px + self.font.ascender_px as u64) as f64) as _,
                 ),
                 (cell_size.0 as _, stroke_thickness),
             ),
-            BasicCursorShape::Bar => {
-                Rect::new((left as _, top as _), (stroke_thickness, cell_size.1 as _))
-            }
+            CursorShapeType::Bar => Rect::new(
+                (left as _, top_px as _),
+                (stroke_thickness, cell_size.1 as _),
+            ),
         };
 
         massive_shapes::Rect::new(rect, color::from_srgba(cursor_color)).into()
@@ -566,17 +576,24 @@ impl TerminalView {
     ) {
         match selection {
             Some(selection) => {
+                // Robustness: A selection can span a lot of lines here, even the ones outside. To
+                // keep the numerical stability in the matrix, we should clip the rects to the
+                // visible range.
                 let rects_stable = Self::selection_rects(&selection, terminal_geometry.columns());
                 let cell_size = terminal_geometry.cell_size_px.map(f64::from);
+                let location_stable_index = selection.row_range().start;
+
+                let (location, top_px) = self
+                    .locations
+                    .acquire_line_location(scene, location_stable_index);
+
+                let top_stable_px = location_stable_index as i64 * self.line_height_px();
+                let translation_offset = top_px as i64 - top_stable_px;
 
                 let rects_final = rects_stable.iter().map(|r| {
-                    r.to_f64().scale(cell_size.0, cell_size.1).translate(
-                        (
-                            0.,
-                            self.scroll_offset_px.final_value().round() * cell_size.1,
-                        )
-                            .into(),
-                    )
+                    r.to_f64()
+                        .scale(cell_size.0, cell_size.1)
+                        .translate((0., translation_offset as f64).into())
                 });
 
                 let selection_color = color::from_srgba(self.color_palette.selection_bg);
@@ -585,14 +602,19 @@ impl TerminalView {
                     .map(|r| massive_shapes::Rect::new(r, selection_color).into())
                     .collect();
 
-                let visual = Visual::new(self.scroll_location.clone(), shapes);
+                let visual = Visual::new(location, shapes);
 
                 //
                 match &mut self.selection {
                     Some(selection) => {
-                        selection.update_if_changed(visual);
+                        selection.visual.update_if_changed(visual);
                     }
-                    None => self.selection = Some(scene.stage(visual)),
+                    None => {
+                        self.selection = Some(SelectionVisual {
+                            row_range: selection.row_range(),
+                            visual: scene.stage(visual),
+                        })
+                    }
                 }
             }
             None => self.selection = None,
@@ -631,6 +653,20 @@ impl TerminalView {
             ),
             bottom_line,
         ]
+    }
+}
+
+// Udating cycle. This was introduced to clean up the locations.
+
+impl TerminalView {
+    pub fn updates_done(&mut self) {
+        // Because the cursor does not leave the visible part (I hope), we ignore it for now (its
+        // matrix can be recreated any time).
+        let mut visuals_range = self.first_line_stable_index.with_len(self.lines.len());
+        if let Some(selection) = &self.selection {
+            visuals_range = visuals_range.union(selection.row_range.clone());
+        }
+        self.locations.mark_used(visuals_range);
     }
 }
 

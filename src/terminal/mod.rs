@@ -3,6 +3,7 @@ mod geometry;
 mod scroller;
 mod state;
 mod view;
+mod scroll_locations;
 
 pub use font::*;
 pub use geometry::*;

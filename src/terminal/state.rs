@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use derive_more::Debug;
-use log::{debug, info};
+use log::{debug, info, trace};
 use massive_shell::Scene;
 
 use crate::{
     TerminalView, WindowState,
-    range_tools::{RangeTools, WithLength},
+    range_ops::{RangeOps, WithLength},
     selection::{Selection, SelectionPos},
 };
 use massive_input::Progress;
@@ -128,7 +128,7 @@ impl TerminalState {
                 view_stable_range = view.view_range(screen.physical_rows)
             }
 
-            info!(
+            trace!(
                 "View's stable range: {view_stable_range:?}, current top: {}",
                 view.scroll_offset()
             );
@@ -192,6 +192,9 @@ impl TerminalState {
             self.selection.range(),
             &window_state.terminal_geometry,
         );
+
+        // Robustness: Need some mechanism here to guarantee that we call updates_done().
+        view.updates_done();
 
         // Commit
 

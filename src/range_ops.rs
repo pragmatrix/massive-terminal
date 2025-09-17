@@ -1,10 +1,13 @@
 #![allow(unused)]
-use std::{fmt::Debug, ops::Range};
+use std::{
+    fmt::Debug,
+    ops::{BitOrAssign, Range},
+};
 
 use num::Integer;
 use rangeset::{intersects_range, range_intersection, range_subtract, range_union};
 
-pub trait RangeTools: Sized {
+pub trait RangeOps: Sized {
     fn intersects(&self, other: &Self) -> bool;
     fn is_inside(&self, other: &Self) -> bool;
     fn intersect(&self, other: &Self) -> Option<Self>;
@@ -12,7 +15,7 @@ pub trait RangeTools: Sized {
     fn union(self, other: Self) -> Self;
 }
 
-impl<T: Integer + Copy + Debug> RangeTools for Range<T> {
+impl<T: Integer + Copy + Debug> RangeOps for Range<T> {
     fn intersects(&self, other: &Self) -> bool {
         intersects_range(self, other)
     }
@@ -21,14 +24,17 @@ impl<T: Integer + Copy + Debug> RangeTools for Range<T> {
         other.start <= self.start && other.end >= self.end
     }
 
+    #[must_use]
     fn intersect(&self, other: &Self) -> Option<Self> {
         range_intersection(self, other)
     }
 
+    #[must_use]
     fn subtract(&self, other: &Self) -> (Option<Self>, Option<Self>) {
         range_subtract(self, other)
     }
 
+    #[must_use]
     fn union(self, other: Self) -> Self {
         range_union(self, other)
     }

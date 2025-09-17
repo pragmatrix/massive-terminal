@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use log::info;
+use log::{info, trace};
 use tokio::{pin, select, sync::Notify, task};
 use winit::{
     dpi::PhysicalSize,
@@ -29,7 +29,7 @@ use massive_shell::{
 
 mod input;
 mod logical_line;
-mod range_tools;
+mod range_ops;
 mod selection;
 mod terminal;
 mod window_geometry;
@@ -253,7 +253,7 @@ impl MassiveTerminal {
             // Idea: Make shell_event opaque and allow checking for animations update in UpdateCycle
             // that is returned from begin_update_cycle()?
             if matches!(shell_event_opt, Some(ShellEvent::ApplyAnimations)) {
-                info!("Applying animations");
+                trace!("Applying animations");
                 self.terminal_scroller.proceed();
             }
 
