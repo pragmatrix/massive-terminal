@@ -479,14 +479,13 @@ fn cluster_background(
 
 // Cursor
 
+#[derive(Debug)]
 enum CursorShapeType {
     Rect,
     Block,
     Underline,
     Bar,
 }
-
-// Cursor
 
 impl TerminalView {
     pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, window_focused: bool) {
