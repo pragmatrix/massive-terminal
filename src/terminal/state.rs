@@ -15,7 +15,7 @@ use crate::{
 };
 use massive_input::Progress;
 use termwiz::surface::SequenceNo;
-use wezterm_term::{CursorPosition, Line, StableRowIndex, Terminal};
+use wezterm_term::{Line, StableRowIndex, Terminal};
 
 #[derive(Debug)]
 pub struct TerminalState {
@@ -123,8 +123,8 @@ impl TerminalState {
                 stable_top_in_screen_view.with_len(screen.physical_rows);
 
             if !current_terminal_stable_phys_range.intersects(&view_stable_range) {
-                debug!("Resetting scrolling animation (terminal view is far away from ours)");
-                view.reset_animations();
+                debug!("Finalizing scrolling animation (terminal view is far away from ours)");
+                view.finalize_animations();
                 view_stable_range = view.view_range(screen.physical_rows)
             }
 
@@ -136,7 +136,8 @@ impl TerminalState {
 
         // Set up the lines to update with the ones the view requests explicitly (For example caused
         // through scrolling).
-        let mut lines_to_update = view.update_view_range(scene, view_stable_range.clone());
+        let (mut view_update, mut lines_to_update) =
+            view.begin_update(scene, view_stable_range.clone());
 
         // Extend the range by the lines that have actually changed in the view range.
         let lines_changed_stable = if terminal_updated {
@@ -174,7 +175,7 @@ impl TerminalState {
         for stable_range in lines_to_update.iter() {
             let lines_count = stable_range.len();
 
-            view.update_lines(
+            view_update.lines(
                 stable_range.start,
                 &self.temporary_line_buf[lines_index.with_len(lines_count)],
             )?;
@@ -185,33 +186,14 @@ impl TerminalState {
 
         // Update cursor and selection
 
-        Self::update_cursor(cursor_pos, view, window_state.focused, scene);
-
-        view.update_selection(
-            scene,
-            self.selection.range(),
-            &window_state.terminal_geometry,
-        );
-
-        // Robustness: Need some mechanism here to guarantee that we call updates_done().
-        view.updates_done();
+        view_update.cursor(cursor_pos, window_state.focused);
+        view_update.selection(self.selection.range(), &window_state.terminal_geometry);
 
         // Commit
 
         self.last_rendered_seq_no = current_seq_no;
 
         Ok(())
-    }
-
-    /// Update the cursor of the view to reflect to position in the terminal.
-    // Architecture: Not sure where this belongs to.
-    pub fn update_cursor(
-        cursor_pos: CursorPosition,
-        view: &mut TerminalView,
-        focused: bool,
-        scene: &Scene,
-    ) {
-        view.update_cursor(scene, cursor_pos, focused);
     }
 
     pub fn selection(&self) -> &Selection {

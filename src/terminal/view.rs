@@ -157,11 +157,11 @@ impl TerminalView {
         self.font.cell_size_px().1 as i64
     }
 
-    /// Reset the current soft scrolling.
+    /// Finalize the current animations.
     ///
     /// This places all lines at their final positions.
-    pub fn reset_animations(&mut self) {
-        self.scroll_offset_px.commit_animation();
+    pub fn finalize_animations(&mut self) {
+        self.scroll_offset_px.finalize();
         self.apply_animations();
     }
 
@@ -201,14 +201,69 @@ impl TerminalView {
         topmost_stable_render_line as isize..(bottom_stable_render_line + 1) as isize
     }
 
-    /// This is the first step before lines can be updated. Reset the view range.
+    pub fn begin_update<'a>(
+        &'a mut self,
+        scene: &'a Scene,
+        view_range: Range<StableRowIndex>,
+    ) -> (ViewUpdate<'a>, RangeSet<StableRowIndex>) {
+        let additional_lines_needed = self.update_view_range(scene, view_range);
+        (ViewUpdate { scene, view: self }, additional_lines_needed)
+    }
+
+    fn end_update(&mut self) {
+        // Because the cursor does not leave the visible part (I hope), we ignore it for now (its
+        // matrix can be recreated any time).
+        let mut visuals_range = self.first_line_stable_index.with_len(self.lines.len());
+        if let Some(selection) = &self.selection {
+            visuals_range = visuals_range.union(selection.row_range.clone());
+        }
+        self.locations.mark_used(visuals_range);
+    }
+}
+
+#[derive(Debug)]
+pub struct ViewUpdate<'a> {
+    pub scene: &'a Scene,
+    view: &'a mut TerminalView,
+}
+
+impl Drop for ViewUpdate<'_> {
+    fn drop(&mut self) {
+        self.view.end_update();
+    }
+}
+
+impl ViewUpdate<'_> {
+    pub fn lines(&mut self, first_line_stable_index: StableRowIndex, lines: &[Line]) -> Result<()> {
+        self.view.update_lines(first_line_stable_index, lines)
+    }
+
+    pub fn cursor(&mut self, pos: CursorPosition, window_focused: bool) {
+        self.view.update_cursor(self.scene, pos, window_focused);
+    }
+
+    pub fn selection(
+        &mut self,
+        selection: Option<NormalizedSelectionRange>,
+        terminal_geometry: &TerminalGeometry,
+    ) {
+        self.view
+            .update_selection(self.scene, selection, terminal_geometry);
+    }
+}
+
+impl TerminalView {
+    /// This is the first step before lines can be updated.
     ///
-    /// This returns a set of stable index ranges that are _requied_ to be updated together with the changed ones in the view_range.
+    /// This returns a set of stable index ranges that are _requied_ to be updated together with the
+    /// changed ones in the view_range.
     ///
     /// This view_range is the one returned from `view_range()`.
     ///
     /// Architecture: If nothing had changed, we already know the view range.
-    pub fn update_view_range(
+    ///
+    /// This begins the update cycle.
+    fn update_view_range(
         &mut self,
         scene: &Scene,
         view_range: Range<StableRowIndex>,
@@ -278,8 +333,10 @@ impl TerminalView {
 
         required_line_updates
     }
+}
 
-    pub fn update_lines(
+impl TerminalView {
+    fn update_lines(
         &mut self,
         first_line_stable_index: StableRowIndex,
         lines: &[Line],
@@ -326,7 +383,7 @@ impl TerminalView {
         // Optimization: Combine clusters with compatible attributes. Colors and widths can vary
         // inside a GlyphRun.
         for cluster in clusters {
-            let run = cluster_to_run(
+            let run = Self::cluster_to_run(
                 font_system,
                 &self.font,
                 &self.color_palette,
@@ -335,7 +392,7 @@ impl TerminalView {
             )?;
 
             let background =
-                cluster_background(&cluster, &self.font, &self.color_palette, (left, top));
+                Self::cluster_background(&cluster, &self.font, &self.color_palette, (left, top));
 
             if let Some(run) = run {
                 left += cluster.width as i64 * self.font.cell_size_px().0 as i64;
@@ -349,132 +406,132 @@ impl TerminalView {
 
         Ok(shapes)
     }
-}
 
-fn cluster_to_run(
-    font_system: &mut FontSystem,
-    font: &TerminalFont,
-    color_palette: &ColorPalette,
-    (left, top): (i64, i64),
-    cluster: &CellCluster,
-) -> Result<Option<GlyphRun>> {
-    let attributes = &cluster.attrs;
+    fn cluster_to_run(
+        font_system: &mut FontSystem,
+        font: &TerminalFont,
+        color_palette: &ColorPalette,
+        (left, top): (i64, i64),
+        cluster: &CellCluster,
+    ) -> Result<Option<GlyphRun>> {
+        let attributes = &cluster.attrs;
 
-    // Performance: BufferLine makes a copy of the text, is there a better way?
-    // Architecture: Should we shape all clusters in one co and prepare Attrs::metadata() accordingly?
-    // Architecture: Under the hood, rustybuzz is used for text shaping, use it directly?
-    // Performance: This contains internal caches, which might benefit reusing them.
-    let mut buffer = BufferLine::new(
-        &cluster.text,
-        LineEnding::None,
-        AttrsList::new(&Attrs::new().family(Family::Name(&font.family_name))),
-        Shaping::Advanced,
-    );
+        // Performance: BufferLine makes a copy of the text, is there a better way?
+        // Architecture: Should we shape all clusters in one co and prepare Attrs::metadata() accordingly?
+        // Architecture: Under the hood, rustybuzz is used for text shaping, use it directly?
+        // Performance: This contains internal caches, which might benefit reusing them.
+        let mut buffer = BufferLine::new(
+            &cluster.text,
+            LineEnding::None,
+            AttrsList::new(&Attrs::new().family(Family::Name(&font.family_name))),
+            Shaping::Advanced,
+        );
 
-    let units_per_em_f = font.units_per_em as f32;
+        let units_per_em_f = font.units_per_em as f32;
 
-    // ADR: We lay out in em units so that positioning information can be processed and compared in
-    // discrete units and perhaps even cached better.
-    let lines = buffer.layout(font_system, units_per_em_f, None, Wrap::None, None, 0);
-    let line = match lines.len() {
-        0 => return Ok(None),
-        1 => &lines[0],
-        lines => {
-            bail!("Expected to see only one line layouted: {lines}")
-        }
-    };
-
-    // Cosmic text provides fractional positions, but we need to align every character directly on a
-    // pixel grid, so start with 0 for now.
-    //
-    // Robustness: scale everything up so that while layout EM positions are used
-    // to exactly map them to the pixel grid.
-
-    let mut glyphs = Vec::with_capacity(line.glyphs.len());
-
-    // Robustness: Shouldn't this be always equal the number of line glyphs?
-    let mut cell_width = 0;
-
-    for glyph in &line.glyphs {
-        // Compute the discrete x offset and pixel position.
-        // Robustness: Report unexpected variance here (> 0.001 ?)
-        let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as u32;
-        let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as u32;
-        let glyph_x = glyph_index * font.glyph_advance_px;
-
-        // Optimization: Compute this only once.
-        cell_width = glyph_index + glyph_index_width;
-
-        // Optimization: Don't pass empty glyphs.
-        let glyph = RunGlyph {
-            pos: (glyph_x as i32, 0),
-            // Architecture: Introduce an internal CacheKey that does not use SubpixelBin (we won't
-            // support that ever, because the author holds the belief that subpixel rendering is a scam)
-            //
-            // Architecture: Research if we would actually benefit from subpixel rendering in
-            // inside a regular gray scale anti-alising setup.
-            key: CacheKey {
-                font_id: glyph.font_id,
-                glyph_id: glyph.glyph_id,
-                font_size_bits: font.size.to_bits(),
-                x_bin: SubpixelBin::Zero,
-                y_bin: SubpixelBin::Zero,
-                flags: glyph.cache_key_flags,
-            },
+        // ADR: We lay out in em units so that positioning information can be processed and compared in
+        // discrete units and perhaps even cached better.
+        let lines = buffer.layout(font_system, units_per_em_f, None, Wrap::None, None, 0);
+        let line = match lines.len() {
+            0 => return Ok(None),
+            1 => &lines[0],
+            lines => {
+                bail!("Expected to see only one line layouted: {lines}")
+            }
         };
-        glyphs.push(glyph);
+
+        // Cosmic text provides fractional positions, but we need to align every character directly on a
+        // pixel grid, so start with 0 for now.
+        //
+        // Robustness: scale everything up so that while layout EM positions are used
+        // to exactly map them to the pixel grid.
+
+        let mut glyphs = Vec::with_capacity(line.glyphs.len());
+
+        // Robustness: Shouldn't this be always equal the number of line glyphs?
+        let mut cell_width = 0;
+
+        for glyph in &line.glyphs {
+            // Compute the discrete x offset and pixel position.
+            // Robustness: Report unexpected variance here (> 0.001 ?)
+            let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as u32;
+            let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as u32;
+            let glyph_x = glyph_index * font.glyph_advance_px;
+
+            // Optimization: Compute this only once.
+            cell_width = glyph_index + glyph_index_width;
+
+            // Optimization: Don't pass empty glyphs.
+            let glyph = RunGlyph {
+                pos: (glyph_x as i32, 0),
+                // Architecture: Introduce an internal CacheKey that does not use SubpixelBin (we won't
+                // support that ever, because the author holds the belief that subpixel rendering is a scam)
+                //
+                // Architecture: Research if we would actually benefit from subpixel rendering in
+                // inside a regular gray scale anti-alising setup.
+                key: CacheKey {
+                    font_id: glyph.font_id,
+                    glyph_id: glyph.glyph_id,
+                    font_size_bits: font.size.to_bits(),
+                    x_bin: SubpixelBin::Zero,
+                    y_bin: SubpixelBin::Zero,
+                    flags: glyph.cache_key_flags,
+                },
+            };
+            glyphs.push(glyph);
+        }
+
+        // Precision: Clarify what color profile we are actually using and document this in the massive Color.
+        let fg_color = color_palette.resolve_fg(attributes.foreground());
+        // Feature: Support a base weight.
+        let weight = match attributes.intensity() {
+            Intensity::Half => TextWeight::LIGHT,
+            Intensity::Normal => TextWeight::NORMAL,
+            Intensity::Bold => TextWeight::BOLD,
+        };
+
+        let run = GlyphRun {
+            translation: (left as _, top as _, 0.).into(),
+            metrics: GlyphRunMetrics {
+                // Precision: compute this once for the font size so that it also matches the pixel cell
+                // size.
+                max_ascent: font.ascender_px,
+                max_descent: font.descender_px,
+                width: (cell_width * font.glyph_advance_px),
+            },
+            text_color: color::from_srgba(fg_color),
+            text_weight: weight,
+            glyphs,
+        };
+
+        Ok(Some(run))
     }
 
-    // Precision: Clarify what color profile we are actually using and document this in the massive Color.
-    let fg_color = color_palette.resolve_fg(attributes.foreground());
-    // Feature: Support a base weight.
-    let weight = match attributes.intensity() {
-        Intensity::Half => TextWeight::LIGHT,
-        Intensity::Normal => TextWeight::NORMAL,
-        Intensity::Bold => TextWeight::BOLD,
-    };
+    /// Retrieves the background shape from the cluster.
+    fn cluster_background(
+        cluster: &CellCluster,
+        font: &TerminalFont,
+        color_palette: &ColorPalette,
+        (left, top): (i64, i64),
+    ) -> Option<Shape> {
+        let background = cluster.attrs.background();
+        // We assume the background is rendered in the default background color.
+        if background == ColorAttribute::Default {
+            return None;
+        }
+        let background = color::from_srgba(color_palette.resolve_bg(background));
 
-    let run = GlyphRun {
-        translation: (left as _, top as _, 0.).into(),
-        metrics: GlyphRunMetrics {
-            // Precision: compute this once for the font size so that it also matches the pixel cell
-            // size.
-            max_ascent: font.ascender_px,
-            max_descent: font.descender_px,
-            width: (cell_width * font.glyph_advance_px),
-        },
-        text_color: color::from_srgba(fg_color),
-        text_weight: weight,
-        glyphs,
-    };
+        let size: Size = (
+            // Precision: We keep multiplication in the u32 range here. Unlikely it's breaking out.
+            (cluster.width as u32 * font.cell_size_px().0) as f64,
+            font.cell_size_px().1 as f64,
+        )
+            .into();
 
-    Ok(Some(run))
-}
+        let lt: Point = (left as f64, top as f64).into();
 
-/// Retrieves the background shape from the cluster.
-fn cluster_background(
-    cluster: &CellCluster,
-    font: &TerminalFont,
-    color_palette: &ColorPalette,
-    (left, top): (i64, i64),
-) -> Option<Shape> {
-    let background = cluster.attrs.background();
-    // We assume the background is rendered in the default background color.
-    if background == ColorAttribute::Default {
-        return None;
+        Some(massive_shapes::Rect::new(Rect::new(lt, size), background).into())
     }
-    let background = color::from_srgba(color_palette.resolve_bg(background));
-
-    let size: Size = (
-        // Precision: We keep multiplication in the u32 range here. Unlikely it's breaking out.
-        (cluster.width as u32 * font.cell_size_px().0) as f64,
-        font.cell_size_px().1 as f64,
-    )
-        .into();
-
-    let lt: Point = (left as f64, top as f64).into();
-
-    Some(massive_shapes::Rect::new(Rect::new(lt, size), background).into())
 }
 
 // Cursor
@@ -488,7 +545,7 @@ enum CursorShapeType {
 }
 
 impl TerminalView {
-    pub fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, window_focused: bool) {
+    fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, window_focused: bool) {
         match pos.visibility {
             CursorVisibility::Hidden => {
                 self.cursor = None;
@@ -652,20 +709,6 @@ impl TerminalView {
             ),
             bottom_line,
         ]
-    }
-}
-
-// Udating cycle. This was introduced to clean up the locations.
-
-impl TerminalView {
-    pub fn updates_done(&mut self) {
-        // Because the cursor does not leave the visible part (I hope), we ignore it for now (its
-        // matrix can be recreated any time).
-        let mut visuals_range = self.first_line_stable_index.with_len(self.lines.len());
-        if let Some(selection) = &self.selection {
-            visuals_range = visuals_range.union(selection.row_range.clone());
-        }
-        self.locations.mark_used(visuals_range);
     }
 }
 
