@@ -5,11 +5,12 @@ use std::{collections::HashMap, ops::Range};
 
 use derive_more::{Deref, From};
 use log::debug;
-use massive_scene::{Handle, Location, Matrix};
-use massive_shell::Scene;
+
 use wezterm_term::StableRowIndex;
 
 use crate::range_ops::*;
+use massive_scene::{Handle, Location, Matrix};
+use massive_shell::Scene;
 
 /// A bucket allocator for scroll matrices. The buckets are defined by a fixed number of StableRowIndex.
 #[derive(Debug)]
