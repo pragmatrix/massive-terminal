@@ -83,7 +83,7 @@ impl ScrollLocations {
         (location, line_offset_px)
     }
 
-    /// Scroll the _crrent_ scroll offset of all matrices to the pixel location.
+    /// Scroll the _current_ scroll offset of all matrices to the pixel location.
     pub fn set_scroll_offset_px(&mut self, scroll_offset_px: u64) {
         let line_height = self.line_height_px;
         self.locations.iter_mut().for_each(|(index, location)| {

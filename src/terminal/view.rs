@@ -268,10 +268,6 @@ impl TerminalView {
         scene: &Scene,
         view_range: Range<StableRowIndex>,
     ) -> RangeSet<StableRowIndex> {
-        // Update the range of matrices we need upfront.
-        // Missing: This is incorrect, needs to include selection and cursor.
-        // self.locations.mark_used(view_range.clone());
-
         let mut required_line_updates = RangeSet::new();
 
         assert!(view_range.end > view_range.start);
