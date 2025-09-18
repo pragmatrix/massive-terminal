@@ -163,20 +163,30 @@ impl TerminalState {
             })
         }
 
-        lines_changed_stable.into_iter().for_each(|l| {
-            if view_stable_range.contains(&l) {
-                lines_to_update.add(l)
-            }
-        });
+        // Now the updated lines are known, but some of them might not be inside the terminal's
+        // range. Split them between terminal lines and empty ones.
+        //
+        // Performance: Only lines_requested could be out of the full stable range.
+        let terminal_lines_requested =
+            lines_requested.intersection_with_range(terminal_full_stable_range.clone());
 
-        for stable_range in lines_to_update.iter() {
+        let out_of_terminal_range_requested = {
+            lines_requested.remove_set(&terminal_lines_requested);
+            lines_requested
+        };
+
+        for stable_range in terminal_lines_requested.iter() {
+            // Detail: This function returns bogus (wrapps) if stable range is out of range, so we
+            // must be sure to not request lines outside of the stable bounds.
+            debug_assert!(stable_range.is_inside(&terminal_full_stable_range));
             let phys_range = screen.stable_range(stable_range);
+
             // Performance: After a terminal `clear`, _all_ lines below the cursor are
             // invalidated for some reason (there _is_ a `SequenceNo` for every line, may be
             // there is a way to find out if the lines actually have changed).
-
-            screen.with_phys_lines(phys_range, |lines| {
-                // This is guaranteed to be called only once for all lines.
+            screen.with_phys_lines(phys_range.clone(), |lines| {
+                // Detail: guaranteed to be called only once for all lines.
+                debug_assert_eq!(lines.len(), phys_range.len());
                 self.temporary_line_buf
                     .extend(lines.iter().copied().cloned());
             });
@@ -189,18 +199,34 @@ impl TerminalState {
         drop(terminal);
 
         // Push the lines to the view.
-        let mut lines_index = 0;
-        for stable_range in lines_requested.iter() {
-            let lines_count = stable_range.len();
+        {
+            let mut lines_index = 0;
+            for stable_range in terminal_lines_requested.iter() {
+                let lines_count = stable_range.len();
 
-            view_update.lines(
-                stable_range.start,
-                &self.temporary_line_buf[lines_index.with_len(lines_count)],
-            )?;
+                view_update.lines(
+                    stable_range.start,
+                    &self.temporary_line_buf[lines_index.with_len(lines_count)],
+                )?;
 
-            lines_index += lines_count;
+                lines_index += lines_count;
+            }
+            self.temporary_line_buf.clear();
         }
-        self.temporary_line_buf.clear();
+
+        // Push the lines that were requested, but were out of range.
+        {
+            for stable_range in out_of_terminal_range_requested.iter() {
+                let len = stable_range.len();
+                if len > self.temporary_line_buf.len() {
+                    self.temporary_line_buf
+                        .resize_with(len, || Line::new(current_seq_no));
+                }
+
+                view_update.lines(stable_range.start, &self.temporary_line_buf[0..len])?;
+            }
+            self.temporary_line_buf.clear();
+        }
 
         // Update cursor and selection
 
