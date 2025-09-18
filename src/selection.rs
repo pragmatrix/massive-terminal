@@ -71,24 +71,24 @@ impl Selection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectionPos {
-    left: usize,
-    top: StableRowIndex,
+    column: usize,
+    row: StableRowIndex,
 }
 
 impl PartialOrd for SelectionPos {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some((self.top, self.left).cmp(&(other.top, other.left)))
+        Some((self.row, self.column).cmp(&(other.row, other.column)))
     }
 }
 
 impl SelectionPos {
-    pub fn new(left: usize, top: StableRowIndex) -> Self {
-        Self { left, top }
+    pub fn new(column: usize, row: StableRowIndex) -> Self {
+        Self { column, row }
     }
 
     pub fn point(&self) -> CellPoint {
-        assert!(self.top >= 0);
-        (self.left, self.top as usize).into()
+        assert!(self.row >= 0);
+        (self.column, self.row as usize).into()
     }
 }
 
@@ -128,7 +128,7 @@ impl SelectionRange {
 
     /// Yields a range representing the row indices.
     pub fn rows(&self) -> Range<StableRowIndex> {
-        self.start.top..self.end.top + 1
+        self.start.row..self.end.row + 1
     }
 
     /// Yields a range representing the selected columns for the specified row.
@@ -139,17 +139,27 @@ impl SelectionRange {
     pub fn cols_for_row(&self, row: StableRowIndex, rectangular: bool) -> Range<usize> {
         match () {
             _ if rectangular => {
-                if row < self.start.top || row > self.end.top {
+                if row < self.start.row || row > self.end.row {
                     0..0
                 } else {
-                    column_range(self.start.left, self.end.left)
+                    Self::column_range(self.start.column, self.end.column)
                 }
             }
-            _ if row < self.start.top || row > self.end.top => 0..0,
-            _ if self.start.top == self.end.top => column_range(self.start.left, self.end.left),
-            _ if row == self.end.top => 0..self.end.left + 1,
-            _ if row == self.start.top => self.start.left..usize::MAX,
+            _ if row < self.start.row || row > self.end.row => 0..0,
+            _ if self.start.row == self.end.row => {
+                Self::column_range(self.start.column, self.end.column)
+            }
+            _ if row == self.end.row => 0..self.end.column + 1,
+            _ if row == self.start.row => self.start.column..usize::MAX,
             _ => 0..usize::MAX,
+        }
+    }
+
+    fn column_range(from: usize, to: usize) -> Range<usize> {
+        if to >= from {
+            from..to + 1
+        } else {
+            to..from + 1
         }
     }
 }
@@ -157,10 +167,8 @@ impl SelectionRange {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Deref)]
 pub struct NormalizedSelectionRange(SelectionRange);
 
-fn column_range(from: usize, to: usize) -> Range<usize> {
-    if to >= from {
-        from..to + 1
-    } else {
-        to..from + 1
+impl NormalizedSelectionRange {
+    pub fn row_range(&self) -> Range<StableRowIndex> {
+        self.0.start.row..self.0.end.row + 1
     }
 }

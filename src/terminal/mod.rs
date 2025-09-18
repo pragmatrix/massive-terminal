@@ -1,5 +1,6 @@
 mod font;
 mod geometry;
+mod scroll_locations;
 mod scroller;
 mod state;
 mod view;
