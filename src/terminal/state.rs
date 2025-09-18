@@ -65,6 +65,9 @@ impl TerminalState {
         // concept.
         view.apply_animations();
 
+        let selection_range = self.selection.range().map(|range| range.stable_rows());
+        let mut changes_intersect_with_selection = false;
+
         let terminal = terminal.lock().unwrap();
         let screen = terminal.screen();
 
@@ -156,6 +159,11 @@ impl TerminalState {
 
             changed.into_iter().for_each(|l| {
                 debug_assert!(view_stable_range.contains(&l));
+                if let Some(selection_range) = &selection_range
+                    && selection_range.contains(&l)
+                {
+                    changes_intersect_with_selection = true;
+                }
                 lines_requested.add(l)
             })
         }
@@ -228,7 +236,14 @@ impl TerminalState {
         // Update cursor and selection
 
         view_update.cursor(cursor_pos, window_state.focused);
-        view_update.selection(self.selection.range(), &window_state.terminal_geometry);
+
+        {
+            // Clear the selection if changes intersect it and the user does not interact with it.
+            if changes_intersect_with_selection && !self.selection.can_progress() {
+                self.selection.reset();
+            }
+            view_update.selection(self.selection.range(), &window_state.terminal_geometry);
+        }
 
         // Commit
 

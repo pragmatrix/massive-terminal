@@ -467,12 +467,12 @@ impl MassiveTerminal {
             return s;
         };
         let mut last_was_wrapped = false;
-        let first_row = sel.rows().start;
-        let last_row = sel.rows().end;
+        let first_row = sel.stable_rows().start;
+        let last_row = sel.stable_rows().end;
 
         let terminal = self.terminal.lock().unwrap();
 
-        for line in Self::get_logical_lines(&terminal, sel.rows()) {
+        for line in Self::get_logical_lines(&terminal, sel.stable_rows()) {
             if !s.is_empty() && !last_was_wrapped {
                 s.push('\n');
             }

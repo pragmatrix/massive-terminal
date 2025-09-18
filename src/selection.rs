@@ -126,8 +126,7 @@ impl SelectionRange {
         }
     }
 
-    /// Yields a range representing the row indices.
-    pub fn rows(&self) -> Range<StableRowIndex> {
+    pub fn stable_rows(&self) -> Range<StableRowIndex> {
         self.start.row..self.end.row + 1
     }
 
@@ -166,9 +165,3 @@ impl SelectionRange {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Deref)]
 pub struct NormalizedSelectionRange(SelectionRange);
-
-impl NormalizedSelectionRange {
-    pub fn row_range(&self) -> Range<StableRowIndex> {
-        self.0.start.row..self.0.end.row + 1
-    }
-}

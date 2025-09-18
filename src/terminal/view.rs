@@ -636,7 +636,7 @@ impl TerminalView {
                 // visible range.
                 let rects_stable = Self::selection_rects(&selection, terminal_geometry.columns());
                 let cell_size = terminal_geometry.cell_size_px.map(f64::from);
-                let location_stable_index = selection.row_range().start;
+                let location_stable_index = selection.stable_rows().start;
 
                 let (location, top_px) = self
                     .locations
@@ -666,7 +666,7 @@ impl TerminalView {
                     }
                     None => {
                         self.selection = Some(SelectionVisual {
-                            row_range: selection.row_range(),
+                            row_range: selection.stable_rows(),
                             visual: scene.stage(visual),
                         })
                     }
