@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use derive_more::Debug;
-use log::{debug, info, trace};
+use log::{debug, info};
 
 use termwiz::surface::SequenceNo;
 use wezterm_term::{Line, StableRowIndex, Terminal};
@@ -101,29 +101,33 @@ impl TerminalState {
         //
         // Visible: 0: Top of the screen.
 
+        // The stable range of the visible part of the terminal.
+        let terminal_visible_stable_range = screen
+            .visible_row_to_stable_row(0)
+            .with_len(screen.physical_rows);
+
+        // The range the terminal has line data for.
+        let terminal_full_stable_range = screen.phys_to_stable_row_index(0).with_len(
+            screen.scrollback_rows(), /* does include the visible part */
+        );
+
         // We need to scroll first, so that the visible range is up to date (even though this
         // should not make a difference when the view is currently animating).
-        let stable_top_in_screen_view = screen.visible_row_to_stable_row(0);
-        view.scroll_to(stable_top_in_screen_view);
+        view.scroll_to(terminal_visible_stable_range.start);
 
         // Get the stable view range from the view. It can't be computed here, because of the
         // animation range.
-        let mut view_stable_range;
+        let view_stable_range = view.view_range(screen.physical_rows);
+
+        // This is now temporarily disabled. It may start flickering at situations we go past
+        // the scrollback buffer, but otherwise it reduces the animation smoothness.
+        #[cfg(false)]
         {
-            view_stable_range = view.view_range(screen.physical_rows);
-
-            // If the view's stable range is out of range compared to the final view, it means that
-            // scrolling lags behind at least one screen. In this case, reset scrolling and get a
-            // new view_range.
-            //
-            // Detail: As a side effect, this also makes sure that the terminal always returns a
-            // correct range of updated lines (which it doesn't if lines are requested outside of
-            // its scrollback buffer).
-
-            let current_terminal_stable_phys_range =
-                stable_top_in_screen_view.with_len(screen.physical_rows);
-
-            if !current_terminal_stable_phys_range.intersects(&view_stable_range) {
+            // If the view's stable range is out of range compared to the terminal's current
+            // physical range (it's visible area in a regular terminal), it means that scrolling
+            // lags behind at least one screen. In this case, reset scrolling and get a new
+            // view_range.
+            if !terminal_visible_stable_range.intersects(&view_stable_range) {
                 debug!("Finalizing scrolling animation (terminal view is far away from ours)");
                 view.finalize_animations();
                 view_stable_range = view.view_range(screen.physical_rows)
@@ -137,48 +141,49 @@ impl TerminalState {
 
         // Set up the lines to update with the ones the view requests explicitly (For example caused
         // through scrolling).
-        let (mut view_update, mut lines_to_update) =
+        let (mut view_update, mut lines_requested) =
             view.begin_update(scene, view_stable_range.clone());
 
-        // Extend the range by the lines that have actually changed in the view range.
-        let lines_changed_stable = if terminal_updated {
-            screen.get_changed_stable_rows(view_stable_range.clone(), self.last_rendered_seq_no)
-        } else {
-            Vec::new()
-        };
+        // The range of existing lines in the terminal that intersect with the view_stable_range.
+        let terminal_view_lines = terminal_full_stable_range.intersect(&view_stable_range);
 
-        // For now log the lines that changed but weren't requested (happens while Resizing for example)
-        #[cfg(debug_assertions)]
-        {
-            use rangeset::RangeSet;
-            let mut rs = RangeSet::new();
-            lines_changed_stable.iter().for_each(|l| {
-                if !view_stable_range.contains(l) {
-                    rs.add(*l)
-                }
-            });
-            if !rs.is_empty() {
-                use log::warn;
-                warn!(
-                    "Lines changed outside requested view stable range {view_stable_range:?}, changed (outside only): {rs:?}"
-                )
-            }
+        // Extend the range by the lines that have actually changed in the view range.
+        //
+        // Detail: Need to pass a valid terminal range, passing a larger range would return
+        // lines outside of the requested range because of internal aligment rules.
+        if terminal_updated && let Some(terminal_range) = terminal_view_lines {
+            let changed = screen.get_changed_stable_rows(terminal_range, self.last_rendered_seq_no);
+
+            changed.into_iter().for_each(|l| {
+                debug_assert!(view_stable_range.contains(&l));
+                lines_requested.add(l)
+            })
         }
 
-        lines_changed_stable.into_iter().for_each(|l| {
-            if view_stable_range.contains(&l) {
-                lines_to_update.add(l)
-            }
-        });
+        // Now the updated lines are known, but some of them might not be inside the terminal's
+        // range. Split them between terminal lines and empty ones.
+        //
+        // Performance: Only lines_requested could be out of the full stable range.
+        let terminal_lines_requested =
+            lines_requested.intersection_with_range(terminal_full_stable_range.clone());
 
-        for stable_range in lines_to_update.iter() {
+        let out_of_terminal_range_requested = {
+            lines_requested.remove_set(&terminal_lines_requested);
+            lines_requested
+        };
+
+        for stable_range in terminal_lines_requested.iter() {
+            // Detail: This function returns bogus (wraps) if stable range is out of range, so we
+            // must be sure to not request lines outside of the stable bounds.
+            debug_assert!(stable_range.is_inside(&terminal_full_stable_range));
             let phys_range = screen.stable_range(stable_range);
+
             // Performance: After a terminal `clear`, _all_ lines below the cursor are
             // invalidated for some reason (there _is_ a `SequenceNo` for every line, may be
             // there is a way to find out if the lines actually have changed).
-
-            screen.with_phys_lines(phys_range, |lines| {
-                // This is guaranteed to be called only once for all lines.
+            screen.with_phys_lines(phys_range.clone(), |lines| {
+                // Detail: guaranteed to be called only once for all lines.
+                debug_assert_eq!(lines.len(), phys_range.len());
                 self.temporary_line_buf
                     .extend(lines.iter().copied().cloned());
             });
@@ -191,18 +196,34 @@ impl TerminalState {
         drop(terminal);
 
         // Push the lines to the view.
-        let mut lines_index = 0;
-        for stable_range in lines_to_update.iter() {
-            let lines_count = stable_range.len();
+        {
+            let mut lines_index = 0;
+            for stable_range in terminal_lines_requested.iter() {
+                let lines_count = stable_range.len();
 
-            view_update.lines(
-                stable_range.start,
-                &self.temporary_line_buf[lines_index.with_len(lines_count)],
-            )?;
+                view_update.lines(
+                    stable_range.start,
+                    &self.temporary_line_buf[lines_index.with_len(lines_count)],
+                )?;
 
-            lines_index += lines_count;
+                lines_index += lines_count;
+            }
+            self.temporary_line_buf.clear();
         }
-        self.temporary_line_buf.clear();
+
+        // Push the lines that were requested, but were out of range.
+        {
+            for stable_range in out_of_terminal_range_requested.iter() {
+                let len = stable_range.len();
+                if len > self.temporary_line_buf.len() {
+                    self.temporary_line_buf
+                        .resize_with(len, || Line::new(current_seq_no));
+                }
+
+                view_update.lines(stable_range.start, &self.temporary_line_buf[0..len])?;
+            }
+            self.temporary_line_buf.clear();
+        }
 
         // Update cursor and selection
 

@@ -160,6 +160,7 @@ impl TerminalView {
     /// Finalize the current animations.
     ///
     /// This places all lines at their final positions.
+    #[allow(unused)]
     pub fn finalize_animations(&mut self) {
         self.scroll_offset_px.finalize();
         self.apply_animations();
