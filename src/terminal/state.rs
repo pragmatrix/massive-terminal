@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use derive_more::Debug;
-use log::{debug, info, trace};
+use log::{debug, info};
 
 use termwiz::surface::SequenceNo;
 use wezterm_term::{Line, StableRowIndex, Terminal};
@@ -117,19 +117,16 @@ impl TerminalState {
 
         // Get the stable view range from the view. It can't be computed here, because of the
         // animation range.
-        let mut view_stable_range;
-        {
-            view_stable_range = view.view_range(screen.physical_rows);
+        let view_stable_range = view.view_range(screen.physical_rows);
 
+        // This is now temporarily disabled. It may starts flickering at situations we go past
+        // the scrollback buffer, but otherwise it reduces the animmation smoothness.
+        #[cfg(false)]
+        {
             // If the view's stable range is out of range compared to the terminal's current
             // physical range (it's visible area in a regular terminal), it means that scrolling
             // lags behind at least one screen. In this case, reset scrolling and get a new
             // view_range.
-            //
-            // Detail: As a side effect, this also makes sure that the terminal always returns a
-            // correct range of updated lines (which it doesn't if lines are requested outside of
-            // its scrollback buffer).
-
             if !terminal_visible_stable_range.intersects(&view_stable_range) {
                 debug!("Finalizing scrolling animation (terminal view is far away from ours)");
                 view.finalize_animations();
