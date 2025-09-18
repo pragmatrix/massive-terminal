@@ -215,6 +215,8 @@ impl TerminalView {
         // matrix can be recreated any time).
         let mut visuals_range = self.first_line_stable_index.with_len(self.lines.len());
         if let Some(selection) = &self.selection {
+            // Review: Unioning the selection can have a nasty large range extension, which needs to
+            // many locations active.
             visuals_range = visuals_range.union(selection.row_range.clone());
         }
         self.locations.mark_used(visuals_range);
