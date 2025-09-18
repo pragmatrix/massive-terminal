@@ -4,7 +4,7 @@ use derive_more::Deref;
 use log::error;
 use wezterm_term::StableRowIndex;
 
-use crate::window_geometry::CellPoint;
+use crate::{range_ops::RangeOps, window_geometry::CellPoint};
 
 #[derive(Debug, Default)]
 pub struct Selection {
@@ -165,3 +165,26 @@ impl SelectionRange {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Deref)]
 pub struct NormalizedSelectionRange(SelectionRange);
+
+impl NormalizedSelectionRange {
+    pub fn clamp_to_rows(self, rows: Range<StableRowIndex>, columns: usize) -> Option<Self> {
+        if !self.stable_rows().intersects(&rows) {
+            return None;
+        }
+
+        let mut start = self.start;
+        let mut end = self.end;
+        if rows.start > start.row {
+            start.row = rows.start;
+            start.column = 0;
+        }
+        if rows.end <= end.row {
+            end.row = rows.end - 1;
+            end.column = columns - 1;
+        }
+        if start.row == end.row && start.column > end.column {
+            return None;
+        }
+        Some(Self(SelectionRange { start, end }))
+    }
+}

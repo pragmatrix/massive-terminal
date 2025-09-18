@@ -70,6 +70,7 @@ impl TerminalState {
 
         let terminal = terminal.lock().unwrap();
         let screen = terminal.screen();
+        let columns = screen.physical_cols;
 
         // Switch between primary and alt screen.
         {
@@ -242,7 +243,14 @@ impl TerminalState {
             if changes_intersect_with_selection && !self.selection.can_progress() {
                 self.selection.reset();
             }
-            view_update.selection(self.selection.range(), &window_state.terminal_geometry);
+            view_update.selection(
+                self.selection
+                    .range()
+                    // The clamping is needed, otherwise we could keep too many matrix locations.
+                    // Architecture: The clamping should happen in the view (there where the problem arises)
+                    .and_then(|range| range.clamp_to_rows(terminal_full_stable_range, columns)),
+                &window_state.terminal_geometry,
+            );
         }
 
         // Commit
