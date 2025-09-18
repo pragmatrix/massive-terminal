@@ -147,9 +147,28 @@ impl TerminalState {
             Vec::new()
         };
 
+        // For now log the lines that changed but weren't requested (happens while Resizing for example)
+        #[cfg(debug_assertions)]
+        {
+            use rangeset::RangeSet;
+            let mut rs = RangeSet::new();
+            lines_changed_stable.iter().for_each(|l| {
+                if !view_stable_range.contains(l) {
+                    rs.add(*l)
+                }
+            });
+            if !rs.is_empty() {
+                use log::warn;
+                warn!(
+                    "Lines changed outside requested view stable range {view_stable_range:?}, changed (outside only): {rs:?}"
+                )
+            }
+        }
+
         lines_changed_stable.into_iter().for_each(|l| {
-            debug_assert!(view_stable_range.contains(&l));
-            lines_to_update.add(l)
+            if view_stable_range.contains(&l) {
+                lines_to_update.add(l)
+            }
         });
 
         for stable_range in lines_to_update.iter() {
