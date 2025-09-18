@@ -173,7 +173,7 @@ impl TerminalState {
         };
 
         for stable_range in terminal_lines_requested.iter() {
-            // Detail: This function returns bogus (wrapps) if stable range is out of range, so we
+            // Detail: This function returns bogus (wraps) if stable range is out of range, so we
             // must be sure to not request lines outside of the stable bounds.
             debug_assert!(stable_range.is_inside(&terminal_full_stable_range));
             let phys_range = screen.stable_range(stable_range);
