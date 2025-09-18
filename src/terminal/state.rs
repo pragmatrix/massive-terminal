@@ -119,8 +119,8 @@ impl TerminalState {
         // animation range.
         let view_stable_range = view.view_range(screen.physical_rows);
 
-        // This is now temporarily disabled. It may starts flickering at situations we go past
-        // the scrollback buffer, but otherwise it reduces the animmation smoothness.
+        // This is now temporarily disabled. It may start flickering at situations we go past
+        // the scrollback buffer, but otherwise it reduces the animation smoothness.
         #[cfg(false)]
         {
             // If the view's stable range is out of range compared to the terminal's current
