@@ -101,10 +101,19 @@ impl TerminalState {
         //
         // Visible: 0: Top of the screen.
 
+        // The stable range of the visible part of the terminal.
+        let terminal_visible_stable_range = screen
+            .visible_row_to_stable_row(0)
+            .with_len(screen.physical_rows);
+
+        // The range the terminal has line data for.
+        let terminal_full_stable_range = screen.phys_to_stable_row_index(0).with_len(
+            screen.scrollback_rows(), /* does include the visible part */
+        );
+
         // We need to scroll first, so that the visible range is up to date (even though this
         // should not make a difference when the view is currently animating).
-        let stable_top_in_screen_view = screen.visible_row_to_stable_row(0);
-        view.scroll_to(stable_top_in_screen_view);
+        view.scroll_to(terminal_visible_stable_range.start);
 
         // Get the stable view range from the view. It can't be computed here, because of the
         // animation range.
@@ -112,18 +121,16 @@ impl TerminalState {
         {
             view_stable_range = view.view_range(screen.physical_rows);
 
-            // If the view's stable range is out of range compared to the final view, it means that
-            // scrolling lags behind at least one screen. In this case, reset scrolling and get a
-            // new view_range.
+            // If the view's stable range is out of range compared to the terminal's current
+            // physical range (it's visible area in a regular terminal), it means that scrolling
+            // lags behind at least one screen. In this case, reset scrolling and get a new
+            // view_range.
             //
             // Detail: As a side effect, this also makes sure that the terminal always returns a
             // correct range of updated lines (which it doesn't if lines are requested outside of
             // its scrollback buffer).
 
-            let current_terminal_stable_phys_range =
-                stable_top_in_screen_view.with_len(screen.physical_rows);
-
-            if !current_terminal_stable_phys_range.intersects(&view_stable_range) {
+            if !terminal_visible_stable_range.intersects(&view_stable_range) {
                 debug!("Finalizing scrolling animation (terminal view is far away from ours)");
                 view.finalize_animations();
                 view_stable_range = view.view_range(screen.physical_rows)
@@ -137,32 +144,23 @@ impl TerminalState {
 
         // Set up the lines to update with the ones the view requests explicitly (For example caused
         // through scrolling).
-        let (mut view_update, mut lines_to_update) =
+        let (mut view_update, mut lines_requested) =
             view.begin_update(scene, view_stable_range.clone());
 
-        // Extend the range by the lines that have actually changed in the view range.
-        let lines_changed_stable = if terminal_updated {
-            screen.get_changed_stable_rows(view_stable_range.clone(), self.last_rendered_seq_no)
-        } else {
-            Vec::new()
-        };
+        // The range of existing lines in the terminal that intersect with the view_stable_range.
+        let terminal_view_lines = terminal_full_stable_range.intersect(&view_stable_range);
 
-        // For now log the lines that changed but weren't requested (happens while Resizing for example)
-        #[cfg(debug_assertions)]
-        {
-            use rangeset::RangeSet;
-            let mut rs = RangeSet::new();
-            lines_changed_stable.iter().for_each(|l| {
-                if !view_stable_range.contains(l) {
-                    rs.add(*l)
-                }
-            });
-            if !rs.is_empty() {
-                use log::warn;
-                warn!(
-                    "Lines changed outside requested view stable range {view_stable_range:?}, changed (outside only): {rs:?}"
-                )
-            }
+        // Extend the range by the lines that have actually changed in the view range.
+        //
+        // Detail: Need to pass a valid terminal range, passing a larger range would return
+        // lines outside of the requested range because of internal aligment rules.
+        if terminal_updated && let Some(terminal_range) = terminal_view_lines {
+            let changed = screen.get_changed_stable_rows(terminal_range, self.last_rendered_seq_no);
+
+            changed.into_iter().for_each(|l| {
+                debug_assert!(view_stable_range.contains(&l));
+                lines_requested.add(l)
+            })
         }
 
         lines_changed_stable.into_iter().for_each(|l| {
@@ -192,7 +190,7 @@ impl TerminalState {
 
         // Push the lines to the view.
         let mut lines_index = 0;
-        for stable_range in lines_to_update.iter() {
+        for stable_range in lines_requested.iter() {
             let lines_count = stable_range.len();
 
             view_update.lines(
