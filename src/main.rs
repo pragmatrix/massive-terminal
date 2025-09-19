@@ -1,7 +1,7 @@
 use std::{
     io::{self, ErrorKind},
     ops::Range,
-    sync::{Arc, Mutex},
+    sync::{self, Arc},
     time::{Duration, Instant},
 };
 
@@ -10,6 +10,7 @@ use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
 use log::{info, trace};
+use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
 use winit::{
     dpi::PhysicalSize,
@@ -117,7 +118,7 @@ impl MassiveTerminal {
         let window = context.new_window(inner_window_size, None).await?;
         window.set_title(APPLICATION_NAME);
 
-        let font_system = Arc::new(Mutex::new(font_system));
+        let font_system = Arc::new(sync::Mutex::new(font_system));
 
         // Ergonomics: Camera::default() should probably create this one.
         let camera = {
@@ -360,7 +361,7 @@ impl MassiveTerminal {
             WindowEvent::Focused(focused) => {
                 // Architecture: Should we track the focused state of the window in the EventAggregator?
                 self.window_state.focused = *focused;
-                self.terminal().lock().unwrap().focus_changed(*focused);
+                self.terminal().lock().focus_changed(*focused);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some((key, modifiers)) = input::termwiz::convert_key_event(event, modifiers)
@@ -374,11 +375,11 @@ impl MassiveTerminal {
                                 self.paste()?
                             }
                             _ => {
-                                self.terminal().lock().unwrap().key_down(key, modifiers)?;
+                                self.terminal().lock().key_down(key, modifiers)?;
                             }
                         },
                         ElementState::Released => {
-                            self.terminal().lock().unwrap().key_up(key, modifiers)?;
+                            self.terminal().lock().key_up(key, modifiers)?;
                         }
                     }
                 }
@@ -423,7 +424,7 @@ impl MassiveTerminal {
         // Robustness: May not fail if this returns an error?
         let text = self.clipboard.get_text()?;
         if !text.is_empty() {
-            self.terminal().lock().unwrap().send_paste(&text)?;
+            self.terminal().lock().send_paste(&text)?;
         }
         Ok(())
     }
@@ -446,7 +447,7 @@ impl MassiveTerminal {
         let first_row = sel.stable_rows().start;
         let last_row = sel.stable_rows().end;
 
-        let terminal = self.terminal().lock().unwrap();
+        let terminal = self.terminal().lock();
 
         for line in Self::get_logical_lines(&terminal, sel.stable_rows()) {
             if !s.is_empty() && !last_was_wrapped {
@@ -519,7 +520,7 @@ async fn dispatch_output_to_terminal(
                     return Ok(()); // EOF
                 }
                 Ok(bytes_read) => {
-                    terminal.lock().unwrap().advance_bytes(&buf[0..bytes_read]);
+                    terminal.lock().advance_bytes(&buf[0..bytes_read]);
                     notify.notify_one();
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {

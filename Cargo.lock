@@ -2420,6 +2420,7 @@ dependencies = [
  "massive-shapes",
  "massive-shell",
  "num",
+ "parking_lot",
  "portable-pty",
  "rangeset",
  "sys-locale",

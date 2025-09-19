@@ -1,12 +1,13 @@
 //! The state we need to store to properly detect changes in the wezterm Terminal instance and to
 //! update our view.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::Result;
 use derive_more::Debug;
 use log::{debug, info};
 
+use parking_lot::Mutex;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{Line, StableRowIndex, Terminal};
 
@@ -75,7 +76,6 @@ impl TerminalState {
 
         self.terminal
             .lock()
-            .unwrap()
             .resize(new_geometry.wezterm_terminal_size());
         // Commit
         self.geometry = new_geometry;
@@ -97,7 +97,7 @@ impl TerminalState {
         let selection_range = self.selection.range().map(|range| range.stable_rows());
         let mut changes_intersect_with_selection = false;
 
-        let terminal = self.terminal.lock().unwrap();
+        let terminal = self.terminal.lock();
         let screen = terminal.screen();
         let columns = screen.physical_cols;
 
