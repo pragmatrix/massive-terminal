@@ -1,14 +1,14 @@
 mod font;
 mod geometry;
+mod presenter;
 mod scroll_locations;
 mod scroller;
-mod presenter;
 mod view;
 mod view_geometry;
 
 pub use font::*;
 pub use geometry::*;
-pub use scroller::*;
 pub use presenter::*;
+pub use scroller::*;
 pub use view::*;
 pub use view_geometry::*;
