@@ -1,47 +1,50 @@
 use portable_pty::PtySize;
-use tuple::Map;
 
 use crate::window_geometry::PixelPoint;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TerminalGeometry {
     /// Cell size in physical pixels.
     pub cell_size_px: (u32, u32),
 
-    /// Terminal size in cells.
-    pub terminal_cell_size: (usize, usize),
+    /// Terminal size in cells (columns, rows).
+    pub terminal_size: (usize, usize),
 }
 
 impl TerminalGeometry {
     pub fn new(cell_size: (u32, u32), terminal_cells: (usize, usize)) -> Self {
         Self {
             cell_size_px: cell_size,
-            terminal_cell_size: terminal_cells,
+            terminal_size: terminal_cells,
         }
     }
 
-    pub fn resize(&mut self, terminal_inner_size: (u32, u32)) {
+    pub fn resize_px(&mut self, terminal_inner_size: (u32, u32)) {
         let terminal_cells = (
             (terminal_inner_size.0 / self.cell_size_px.0) as usize,
             (terminal_inner_size.1 / self.cell_size_px.1) as usize,
         );
         let terminal_cells = (terminal_cells.0.max(1), terminal_cells.1.max(1));
 
-        self.terminal_cell_size = terminal_cells;
+        self.terminal_size = terminal_cells;
     }
 
     pub fn columns(&self) -> usize {
-        self.terminal_cell_size.0
+        self.terminal_size.0
     }
 
     pub fn rows(&self) -> usize {
-        self.terminal_cell_size.1
+        self.terminal_size.1
+    }
+
+    pub fn line_height_px(&self) -> u32 {
+        self.cell_size_px.1
     }
 
     pub fn size_px(&self) -> (u32, u32) {
         (
-            self.cell_size_px.0 * self.terminal_cell_size.0 as u32,
-            self.cell_size_px.1 * self.terminal_cell_size.1 as u32,
+            self.cell_size_px.0 * self.terminal_size.0 as u32,
+            self.cell_size_px.1 * self.terminal_size.1 as u32,
         )
     }
 
@@ -64,24 +67,6 @@ impl TerminalGeometry {
             // Production: Set dpi
             ..wezterm_term::TerminalSize::default()
         }
-    }
-
-    /// The cell for a particular pixel coordinate in the pixel space of the view.
-    pub fn view_to_cell(&self, view_px: PixelPoint) -> Option<(usize, usize)> {
-        let (x, y) = view_px.into();
-
-        let view_size = self.size_px().map(|c| c as f64);
-
-        // Abstraction: Use Rect here
-        if x < 0.0 || y < 0.0 || x >= view_size.0 || y >= view_size.1 {
-            return None;
-        }
-
-        let cell_size_px = self.cell_size_px.map(|c| c as f64);
-
-        let col = (x / cell_size_px.0).floor() as usize;
-        let row = (y / cell_size_px.1).floor() as usize;
-        Some((col, row))
     }
 
     /// Decide if scrolling is needed and how many pixels the hit position lies away from.

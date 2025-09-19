@@ -64,9 +64,6 @@ struct MassiveTerminal {
     #[debug(skip)]
     pty_pair: PtyPair,
 
-    #[debug(skip)]
-    terminal: Arc<Mutex<Terminal>>,
-
     scene: Scene,
     view_matrix: Handle<Matrix>,
 
@@ -110,11 +107,10 @@ impl MassiveTerminal {
 
         let padding_px = terminal_font.cell_size_px().0 / 2;
 
-        let window_geometry = WindowGeometry::new(
-            scale_factor,
-            padding_px,
-            TerminalGeometry::new(terminal_font.cell_size_px(), terminal_size),
-        );
+        let terminal_geometry = TerminalGeometry::new(terminal_font.cell_size_px(), terminal_size);
+
+        let window_geometry =
+            WindowGeometry::from_terminal_geometry(&terminal_geometry, scale_factor, padding_px);
 
         let inner_window_size: PhysicalSize<u32> = window_geometry.inner_size_px().into();
 
@@ -141,7 +137,7 @@ impl MassiveTerminal {
         let pty_system = native_pty_system();
 
         // Create a new pty
-        let pty_pair = pty_system.openpty(window_geometry.terminal_geometry.pty_size())?;
+        let pty_pair = pty_system.openpty(terminal_geometry.pty_size())?;
 
         let cmd = CommandBuilder::new_default_prog();
 
@@ -156,14 +152,13 @@ impl MassiveTerminal {
         let configuration = MassiveTerminalConfiguration {};
 
         let terminal = Terminal::new(
-            window_geometry.terminal_geometry.wezterm_terminal_size(),
+            terminal_geometry.wezterm_terminal_size(),
             Arc::new(configuration),
             TERMINAL_NAME,
             TERMINAL_VERSION,
             writer,
         );
         let last_rendered_seq_no = terminal.current_seqno();
-        let terminal = Arc::new(Mutex::new(terminal));
 
         let scene = Scene::new();
 
@@ -186,14 +181,19 @@ impl MassiveTerminal {
         let terminal_scroller =
             TerminalScroller::new(&scene, Duration::from_secs(1), Duration::from_secs(1));
 
-        let terminal_state = TerminalState::new(view_gen, last_rendered_seq_no, &scene);
+        let terminal_state = TerminalState::new(
+            terminal_geometry,
+            terminal,
+            view_gen,
+            last_rendered_seq_no,
+            &scene,
+        );
 
         Ok(Self {
             context,
             window,
             renderer,
             pty_pair,
-            terminal,
             scene,
             view_matrix,
             event_manager: EventManager::default(),
@@ -205,13 +205,17 @@ impl MassiveTerminal {
         })
     }
 
+    fn terminal(&self) -> &Arc<Mutex<Terminal>> {
+        &self.terminal_state.terminal
+    }
+
     async fn run(&mut self) -> Result<()> {
         let notify = Arc::new(Notify::new());
         // Read and parse output from the pty with reader
         let reader = self.pty_pair.master.try_clone_reader()?;
 
         let output_dispatcher =
-            dispatch_output_to_terminal(reader, self.terminal.clone(), notify.clone());
+            dispatch_output_to_terminal(reader, self.terminal().clone(), notify.clone());
 
         pin!(output_dispatcher);
 
@@ -261,7 +265,7 @@ impl MassiveTerminal {
                 // Update lines & cursor
 
                 self.terminal_state
-                    .update(&self.terminal, &self.window_state, &self.scene)?;
+                    .update(&self.window_state, &self.scene)?;
             }
 
             // Center
@@ -306,34 +310,29 @@ impl MassiveTerminal {
 
         // Process selecting user state
 
-        let hit_test_view = |p| {
+        let hit_view_matrix = |p| {
             self.renderer
                 .geometry()
                 .unproject_to_model_z0(p, &self.view_matrix.value())
                 .map(|p| (p.x, p.y).into())
         };
 
-        let view_to_cell = |view_hit| self.window_state.terminal_geometry.view_to_cell(view_hit);
-
         match &mut self.selecting {
             None => {
                 if let Some(movement) = ev.detect_movement(MouseButton::Left, min_movement_distance)
-                    && let Some(cell_hit) = hit_test_view(movement.from).and_then(view_to_cell)
+                    && let Some(hit) = hit_view_matrix(movement.from)
                 {
-                    self.terminal_state.selection_begin(cell_hit);
+                    self.terminal_state.selection_begin(hit);
                     self.selecting = Some(movement);
                 }
             }
             Some(movement) => {
                 if let Some(progress) = movement.track_to(&ev) {
-                    let progress = progress.map_or_cancel(hit_test_view);
+                    let progress = progress.map_or_cancel(hit_view_matrix);
 
                     // Scroll?
                     if let Some(view_hit) = progress.proceeds() {
-                        let scroll = self
-                            .window_state
-                            .terminal_geometry
-                            .scroll_distance(*view_hit);
+                        let scroll = self.terminal_state.geometry().scroll_distance(*view_hit);
                         if let Some(scroll) = scroll {
                             self.terminal_scroller.set_velocity(scroll);
                         }
@@ -342,10 +341,8 @@ impl MassiveTerminal {
                     // Map to selection.
                     // Robustness: Should we support negative cell hits, so that the selection can always progress here?
 
-                    if let Some(cell_progress) = progress.try_map(view_to_cell) {
-                        assert!(self.terminal_state.selection_can_progress());
-                        self.terminal_state.selection_progress(cell_progress);
-                    }
+                    assert!(self.terminal_state.selection_can_progress());
+                    self.terminal_state.selection_progress(progress);
 
                     if progress.ends() {
                         self.selecting = None;
@@ -363,7 +360,7 @@ impl MassiveTerminal {
             WindowEvent::Focused(focused) => {
                 // Architecture: Should we track the focused state of the window in the EventAggregator?
                 self.window_state.focused = *focused;
-                self.terminal.lock().unwrap().focus_changed(*focused);
+                self.terminal().lock().unwrap().focus_changed(*focused);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some((key, modifiers)) = input::termwiz::convert_key_event(event, modifiers)
@@ -377,11 +374,11 @@ impl MassiveTerminal {
                                 self.paste()?
                             }
                             _ => {
-                                self.terminal.lock().unwrap().key_down(key, modifiers)?;
+                                self.terminal().lock().unwrap().key_down(key, modifiers)?;
                             }
                         },
                         ElementState::Released => {
-                            self.terminal.lock().unwrap().key_up(key, modifiers)?;
+                            self.terminal().lock().unwrap().key_up(key, modifiers)?;
                         }
                     }
                 }
@@ -392,34 +389,13 @@ impl MassiveTerminal {
     }
 
     fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {
-        let current_size = self
-            .window_state
-            .geometry
-            .terminal_geometry
-            .terminal_cell_size;
-
-        // First the geometry.
-        self.window_state.geometry.resize(new_window_size_px);
-
-        if self
-            .window_state
-            .geometry
-            .terminal_geometry
-            .terminal_cell_size
-            == current_size
-        {
-            return Ok(());
+        // First the window.
+        let suggested_terminal_size_px = self.window_state.geometry.resize(new_window_size_px);
+        if self.terminal_state.resize(suggested_terminal_size_px)? {
+            self.pty_pair
+                .master
+                .resize(self.terminal_state.geometry().pty_size())?;
         }
-
-        // Then we go bottom up.
-        let terminal = &self.window_state.terminal_geometry;
-
-        self.pty_pair.master.resize(terminal.pty_size())?;
-
-        self.terminal
-            .lock()
-            .unwrap()
-            .resize(terminal.wezterm_terminal_size());
 
         Ok(())
     }
@@ -447,7 +423,7 @@ impl MassiveTerminal {
         // Robustness: May not fail if this returns an error?
         let text = self.clipboard.get_text()?;
         if !text.is_empty() {
-            self.terminal.lock().unwrap().send_paste(&text)?;
+            self.terminal().lock().unwrap().send_paste(&text)?;
         }
         Ok(())
     }
@@ -470,7 +446,7 @@ impl MassiveTerminal {
         let first_row = sel.stable_rows().start;
         let last_row = sel.stable_rows().end;
 
-        let terminal = self.terminal.lock().unwrap();
+        let terminal = self.terminal().lock().unwrap();
 
         for line in Self::get_logical_lines(&terminal, sel.stable_rows()) {
             if !s.is_empty() && !last_was_wrapped {

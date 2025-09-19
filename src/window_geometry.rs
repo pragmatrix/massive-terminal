@@ -19,14 +19,15 @@ pub struct WindowGeometry {
 
     /// Padding around the terminal in physical pixels.
     padding_px: u32,
-
-    // Architecture: Even though the WindowGeometry is built from the terminal's geometry, this does not belong here.
-    pub terminal_geometry: TerminalGeometry,
 }
 
 impl WindowGeometry {
-    pub fn new(scale_factor: f64, padding_px: u32, terminal: TerminalGeometry) -> Self {
-        let (width, height) = terminal.size_px();
+    pub fn from_terminal_geometry(
+        terminal_geometry: &TerminalGeometry,
+        scale_factor: f64,
+        padding_px: u32,
+    ) -> Self {
+        let (width, height) = terminal_geometry.size_px();
         let padding_2 = padding_px * 2;
         let inner_size_px = (width + padding_2, height + padding_2);
 
@@ -34,7 +35,6 @@ impl WindowGeometry {
             _scale_factor: scale_factor,
             inner_size_px,
             padding_px,
-            terminal_geometry: terminal,
         }
     }
 
@@ -42,13 +42,14 @@ impl WindowGeometry {
         self.inner_size_px
     }
 
-    pub fn resize(&mut self, new_inner_size_px: (u32, u32)) {
+    /// Returns the terminal inner size in pixel.
+    pub fn resize(&mut self, new_inner_size_px: (u32, u32)) -> (u32, u32) {
         let padding_2 = self.padding_px * 2;
         let terminal_inner_size = (
             new_inner_size_px.0.saturating_sub(padding_2),
             new_inner_size_px.1.saturating_sub(padding_2),
         );
-        self.terminal_geometry.resize(terminal_inner_size);
         self.inner_size_px = new_inner_size_px;
+        terminal_inner_size
     }
 }

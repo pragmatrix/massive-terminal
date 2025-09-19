@@ -26,7 +26,7 @@ use crate::{
     TerminalFont,
     range_ops::{RangeOps, WithLength},
     selection::{NormalizedSelectionRange, SelectionRange},
-    terminal::scroll_locations::ScrollLocations,
+    terminal::{ViewGeometry, scroll_locations::ScrollLocations},
     window_geometry::CellRect,
 };
 use massive_animation::{Interpolation, Timeline};
@@ -125,7 +125,7 @@ impl TerminalView {
     }
 }
 
-// Lines
+// Animation & Geometry
 
 impl TerminalView {
     /// Scroll to the new scroll offset.
@@ -145,16 +145,16 @@ impl TerminalView {
         );
     }
 
-    pub fn scroll_offset(&self) -> StableRowIndex {
-        self.scroll_offset
-    }
-
     fn scroll_offset_in_px(&self) -> i64 {
-        self.scroll_offset as i64 * self.line_height_px()
+        self.scroll_offset as i64 * self.line_height_px() as i64
     }
 
-    fn line_height_px(&self) -> i64 {
-        self.font.cell_size_px().1 as i64
+    fn current_scroll_offset_px(&self) -> i64 {
+        self.scroll_offset_px.value().round() as i64
+    }
+
+    fn line_height_px(&self) -> u32 {
+        self.font.cell_size_px().1
     }
 
     /// Finalize the current animations.
@@ -172,36 +172,50 @@ impl TerminalView {
         // update the latest value yet.
 
         // Round to the nearest pixel, otherwise animated frames would not be pixel perfect.
-        let scroll_offset_px = self.scroll_offset_px.value().round();
+        let scroll_offset_px = self.current_scroll_offset_px();
         trace!(
             "Updating scroll offset: {scroll_offset_px} (apx line: {})",
-            scroll_offset_px / self.line_height_px() as f64
+            scroll_offset_px / self.line_height_px() as i64
         );
         self.locations.set_scroll_offset_px(scroll_offset_px as u64);
     }
 
-    /// Return the stable range of all the lines we need to update for the stable_range given in the
-    /// screen taking the current animation into account.
-    pub fn view_range(&self, rows: usize) -> Range<StableRowIndex> {
+    /// Return the current geometry of the view.
+    ///
+    /// This returns the stable range of all the lines we need to update taking the current scrolling
+    /// animation into account.
+    pub fn geometry(&self, terminal_geometry: &TerminalGeometry) -> ViewGeometry {
+        let rows = terminal_geometry.rows();
         assert!(rows >= 1);
 
         // First pixel visible inside the screen viewed.
         let line_height_px = self.font.cell_size_px().1 as i64;
-        let animated_scroll_offset_px = self.scroll_offset_px.value();
 
-        let topmost_pixel_line_visible = animated_scroll_offset_px.trunc() as i64;
+        let topmost_pixel_line_visible = self.current_scroll_offset_px();
+        let topmost_stable_render_line = topmost_pixel_line_visible / line_height_px;
+        let topmost_stable_render_line_anscend = topmost_pixel_line_visible % line_height_px;
+
         // -1 because we want to hit the line the pixel is on and don't render more than row cells
         // if animations are done.
         let bottom_pixel_line_visible =
             (topmost_pixel_line_visible + line_height_px * rows as i64) - 1;
-
-        let topmost_stable_render_line = topmost_pixel_line_visible / line_height_px;
         let bottom_stable_render_line = bottom_pixel_line_visible / line_height_px;
         assert!(bottom_stable_render_line >= topmost_stable_render_line);
 
-        topmost_stable_render_line as isize..(bottom_stable_render_line + 1) as isize
-    }
+        let stable_range = topmost_stable_render_line as StableRowIndex
+            ..(bottom_stable_render_line + 1) as StableRowIndex;
 
+        ViewGeometry {
+            terminal: *terminal_geometry,
+            stable_range_ascend_px: topmost_stable_render_line_anscend as u32,
+            stable_range,
+        }
+    }
+}
+
+// Updating
+
+impl TerminalView {
     pub fn begin_update<'a>(
         &'a mut self,
         scene: &'a Scene,
@@ -642,7 +656,7 @@ impl TerminalView {
                     .locations
                     .acquire_line_location(scene, location_stable_index);
 
-                let top_stable_px = location_stable_index as i64 * self.line_height_px();
+                let top_stable_px = location_stable_index as i64 * self.line_height_px() as i64;
                 let translation_offset = top_px as i64 - top_stable_px;
 
                 let rects_final = rects_stable.iter().map(|r| {

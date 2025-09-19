@@ -14,15 +14,24 @@ use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
     selection::{Selection, SelectionPos},
+    terminal::TerminalGeometry,
+    window_geometry::PixelPoint,
 };
 use massive_input::Progress;
 use massive_shell::Scene;
 
+// Naming: TerminalPresenter?
 #[derive(Debug)]
 pub struct TerminalState {
+    geometry: TerminalGeometry,
+    // Architecture: The presenter should probably act as a facade to the unterlying terminal.
+    #[debug(skip)]
+    pub terminal: Arc<Mutex<Terminal>>,
+
     #[debug(skip)]
     #[allow(clippy::type_complexity)]
     view_gen: Box<dyn Fn(&Scene, StableRowIndex) -> TerminalView + Send>,
+
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
     selection: Selection,
@@ -32,12 +41,16 @@ pub struct TerminalState {
 
 impl TerminalState {
     pub fn new(
+        geometry: TerminalGeometry,
+        terminal: Terminal,
         view_gen: impl Fn(&Scene, StableRowIndex) -> TerminalView + Send + 'static,
         last_rendered_seq_no: SequenceNo,
         scene: &Scene,
     ) -> Self {
         let view = view_gen(scene, 0);
         Self {
+            geometry,
+            terminal: Mutex::new(terminal).into(),
             view_gen: Box::new(view_gen),
             last_rendered_seq_no,
             temporary_line_buf: Vec::new(),
@@ -48,13 +61,29 @@ impl TerminalState {
         }
     }
 
+    pub fn geometry(&self) -> &TerminalGeometry {
+        &self.geometry
+    }
+
+    // Returns `true` if the terminal size in cells changed.
+    pub fn resize(&mut self, new_size_px: (u32, u32)) -> Result<bool> {
+        let mut new_geometry = self.geometry;
+        new_geometry.resize_px(new_size_px);
+        if new_geometry == self.geometry {
+            return Ok(false);
+        }
+
+        self.terminal
+            .lock()
+            .unwrap()
+            .resize(new_geometry.wezterm_terminal_size());
+        // Commit
+        self.geometry = new_geometry;
+        Ok(true)
+    }
+
     /// Update the view lines, cursor, and selection.
-    pub fn update(
-        &mut self,
-        terminal: &Arc<Mutex<Terminal>>,
-        window_state: &WindowState,
-        scene: &Scene,
-    ) -> Result<()> {
+    pub fn update(&mut self, window_state: &WindowState, scene: &Scene) -> Result<()> {
         let view = &mut self.view;
 
         // Currently we need always apply view animations, otherwise the scroll matrix is not
@@ -68,7 +97,7 @@ impl TerminalState {
         let selection_range = self.selection.range().map(|range| range.stable_rows());
         let mut changes_intersect_with_selection = false;
 
-        let terminal = terminal.lock().unwrap();
+        let terminal = self.terminal.lock().unwrap();
         let screen = terminal.screen();
         let columns = screen.physical_cols;
 
@@ -119,9 +148,8 @@ impl TerminalState {
         // should not make a difference when the view is currently animating).
         view.scroll_to(terminal_visible_stable_range.start);
 
-        // Get the stable view range from the view. It can't be computed here, because of the
-        // animation range.
-        let view_stable_range = view.view_range(screen.physical_rows);
+        // Get the range of lines the view is showing currently.
+        let view_stable_range = view.geometry(&self.geometry).stable_range;
 
         // This is now temporarily disabled. It may start flickering at situations we go past
         // the scrollback buffer, but otherwise it reduces the animation smoothness.
@@ -249,7 +277,7 @@ impl TerminalState {
                     // The clamping is needed, otherwise we could keep too many matrix locations.
                     // Architecture: The clamping should happen in the view (there where the problem arises)
                     .and_then(|range| range.clamp_to_rows(terminal_full_stable_range, columns)),
-                &window_state.terminal_geometry,
+                &self.geometry,
             );
         }
 
@@ -264,28 +292,30 @@ impl TerminalState {
         &self.selection
     }
 
-    pub fn selection_begin(&mut self, vis_cell: (usize, usize)) {
-        let pos = self.visible_cell_to_selection_pos(vis_cell);
-        self.selection.begin(pos);
+    pub fn selection_begin(&mut self, hit: PixelPoint) {
+        self.selection
+            .begin(self.pixel_coords_to_selection_pos(hit));
     }
 
     pub fn selection_can_progress(&self) -> bool {
         self.selection.can_progress()
     }
 
-    pub fn selection_progress(&mut self, progress: Progress<(usize, usize)>) {
+    pub fn selection_progress(&mut self, progress: Progress<PixelPoint>) {
         match progress {
             Progress::Proceed(cell_hit) => {
-                let pos = self.visible_cell_to_selection_pos(cell_hit);
-                self.selection.progress(pos);
+                self.selection
+                    .progress(self.pixel_coords_to_selection_pos(cell_hit));
             }
             Progress::Commit => self.selection.end(),
             Progress::Cancel => self.selection.reset(),
         }
     }
 
-    pub fn visible_cell_to_selection_pos(&self, vis_cell: (usize, usize)) -> SelectionPos {
-        // Bug: What about secondary screen?
-        SelectionPos::new(vis_cell.0, vis_cell.1 as isize + self.view.scroll_offset())
+    pub fn pixel_coords_to_selection_pos(&self, hit: PixelPoint) -> SelectionPos {
+        let geometry = self.view.geometry(&self.geometry);
+        let (column, stable_row) = geometry.hit_cell(hit);
+
+        SelectionPos::new(column.max(0) as usize, stable_row)
     }
 }
