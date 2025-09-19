@@ -71,7 +71,7 @@ struct MassiveTerminal {
     event_manager: EventManager,
 
     window_state: WindowState,
-    terminal_state: TerminalState,
+    presenter: TerminalPresenter,
     // Architecture: This may belong into TerminalState or even TerminalView?
     terminal_scroller: TerminalScroller,
 
@@ -182,7 +182,7 @@ impl MassiveTerminal {
         let terminal_scroller =
             TerminalScroller::new(&scene, Duration::from_secs(1), Duration::from_secs(1));
 
-        let terminal_state = TerminalState::new(
+        let presenter = TerminalPresenter::new(
             terminal_geometry,
             terminal,
             view_gen,
@@ -199,7 +199,7 @@ impl MassiveTerminal {
             view_matrix,
             event_manager: EventManager::default(),
             window_state: WindowState::new(window_geometry),
-            terminal_state,
+            presenter,
             terminal_scroller,
             selecting: None,
             clipboard: Clipboard::new()?,
@@ -207,7 +207,7 @@ impl MassiveTerminal {
     }
 
     fn terminal(&self) -> &Arc<Mutex<Terminal>> {
-        &self.terminal_state.terminal
+        &self.presenter.terminal
     }
 
     async fn run(&mut self) -> Result<()> {
@@ -265,8 +265,7 @@ impl MassiveTerminal {
             {
                 // Update lines & cursor
 
-                self.terminal_state
-                    .update(&self.window_state, &self.scene)?;
+                self.presenter.update(&self.window_state, &self.scene)?;
             }
 
             // Center
@@ -323,7 +322,7 @@ impl MassiveTerminal {
                 if let Some(movement) = ev.detect_movement(MouseButton::Left, min_movement_distance)
                     && let Some(hit) = hit_view_matrix(movement.from)
                 {
-                    self.terminal_state.selection_begin(hit);
+                    self.presenter.selection_begin(hit);
                     self.selecting = Some(movement);
                 }
             }
@@ -333,7 +332,7 @@ impl MassiveTerminal {
 
                     // Scroll?
                     if let Some(view_hit) = progress.proceeds() {
-                        let scroll = self.terminal_state.geometry().scroll_distance(*view_hit);
+                        let scroll = self.presenter.geometry().scroll_distance(*view_hit);
                         if let Some(scroll) = scroll {
                             self.terminal_scroller.set_velocity(scroll);
                         }
@@ -342,8 +341,8 @@ impl MassiveTerminal {
                     // Map to selection.
                     // Robustness: Should we support negative cell hits, so that the selection can always progress here?
 
-                    assert!(self.terminal_state.selection_can_progress());
-                    self.terminal_state.selection_progress(progress);
+                    assert!(self.presenter.selection_can_progress());
+                    self.presenter.selection_progress(progress);
 
                     if progress.ends() {
                         self.selecting = None;
@@ -392,10 +391,10 @@ impl MassiveTerminal {
     fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {
         // First the window.
         let suggested_terminal_size_px = self.window_state.geometry.resize(new_window_size_px);
-        if self.terminal_state.resize(suggested_terminal_size_px)? {
+        if self.presenter.resize(suggested_terminal_size_px)? {
             self.pty_pair
                 .master
-                .resize(self.terminal_state.geometry().pty_size())?;
+                .resize(self.presenter.geometry().pty_size())?;
         }
 
         Ok(())
@@ -440,7 +439,7 @@ impl MassiveTerminal {
         let mut s = String::new();
         // Feature: Rectangular selection.
         let rectangular = false;
-        let Some(sel) = self.terminal_state.selection().range() else {
+        let Some(sel) = self.presenter.selection().range() else {
             return s;
         };
         let mut last_was_wrapped = false;

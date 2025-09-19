@@ -1,6 +1,3 @@
-//! The state we need to store to properly detect changes in the wezterm Terminal instance and to
-//! update our view.
-
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -21,9 +18,10 @@ use crate::{
 use massive_input::Progress;
 use massive_shell::Scene;
 
-// Naming: TerminalPresenter?
+/// The presentation logic and state we need to store to properly detect changes in the wezterm
+/// Terminal instance and to update our view.
 #[derive(Debug)]
-pub struct TerminalState {
+pub struct TerminalPresenter {
     geometry: TerminalGeometry,
     // Architecture: The presenter should probably act as a facade to the unterlying terminal.
     #[debug(skip)]
@@ -40,7 +38,7 @@ pub struct TerminalState {
     alt_screen_active: bool,
 }
 
-impl TerminalState {
+impl TerminalPresenter {
     pub fn new(
         geometry: TerminalGeometry,
         terminal: Terminal,
