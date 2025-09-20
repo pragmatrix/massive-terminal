@@ -12,7 +12,7 @@ pub struct TerminalScroller {
     /// The duration until we reach the resting point.
     phase_out_duration: Duration,
 
-    /// The current velocity, normalized 0..1
+    /// The current velocity in pixels per second.
     velocity: Timeline<f64>,
 
     /// The current scroll offset, either manually updated by the current velocity or animated.
@@ -68,8 +68,10 @@ impl TerminalScroller {
         self.state = ScrollAnimationState::PhasingOut;
     }
 
-    /// Proceed the scrolling animation and return the value. Returns `None` if no scrolling is
-    /// active and / or the resting point has been returned before.
+    /// Proceed the scrolling animation and return the final scroll offset.
+    ///
+    /// Returns `None` if no scrolling is active and / or the resting point has been returned
+    /// before.
     pub fn proceed(&mut self) -> Option<f64> {
         match self.state {
             ScrollAnimationState::NoScrolling => None,
