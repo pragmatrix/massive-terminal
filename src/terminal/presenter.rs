@@ -144,7 +144,7 @@ impl TerminalPresenter {
 
         // We need to scroll first, so that the visible range is up to date (even though this
         // should not make a difference when the view is currently animating).
-        view.scroll_to(terminal_visible_stable_range.start);
+        view.scroll_to_stable(terminal_visible_stable_range.start);
 
         // Get the range of lines the view is showing currently.
         let view_stable_range = view.geometry(&self.geometry).stable_range;

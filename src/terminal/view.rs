@@ -10,7 +10,6 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use log::trace;
 use rangeset::RangeSet;
 use tuple::Map;
 
@@ -35,7 +34,7 @@ use massive_scene::{Handle, Location, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 use massive_shell::Scene;
 
-const SCROLL_DURATION: Duration = Duration::from_millis(100);
+const SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(100);
 
 /// TerminalView is the into a terminal's screen lines.
 ///
@@ -55,14 +54,11 @@ pub struct TerminalView {
 
     locations: ScrollLocations,
 
-    /// Positive scroll offset of the screen.
-    scroll_offset: StableRowIndex,
-
     /// The number of pixels with which _all_ lines are transformed upwards.
     ///
     /// When the view scrolls up and a new line comes in on the bottom, this value increases.
     ///
-    /// Never negative
+    /// May be negative (while animating).
     scroll_offset_px: Timeline<f64>,
 
     /// The first line's stable index in lines.
@@ -83,7 +79,9 @@ struct LineVisual {
     /// The visual representing the line.
     visual: Handle<Visual>,
     /// The top offset to add to all shapes.
-    top_offset: u64,
+    ///
+    /// Might be negative for lines over the top of the terminal's stable range.
+    top_offset: i64,
 }
 
 #[derive(Debug)]
@@ -101,7 +99,7 @@ impl TerminalView {
     pub fn new(
         font_system: Arc<Mutex<FontSystem>>,
         font: TerminalFont,
-        scroll_offset: isize,
+        scroll_offset: StableRowIndex,
         parent_location: Handle<Location>,
         scene: &Scene,
     ) -> Self {
@@ -115,7 +113,6 @@ impl TerminalView {
             font,
             color_palette: ColorPalette::default(),
             locations,
-            scroll_offset,
             scroll_offset_px: scene.timeline(scroll_offset_px as f64),
             first_line_stable_index: 0,
             lines: VecDeque::new(),
@@ -129,27 +126,36 @@ impl TerminalView {
 
 impl TerminalView {
     /// Scroll to the new scroll offset.
-    pub fn scroll_to(&mut self, new_scroll_offset: StableRowIndex) {
-        let delta_lines = new_scroll_offset - self.scroll_offset;
-        if delta_lines == 0 {
-            return;
-        }
+    pub fn scroll_to_stable(&mut self, scroll_offset: StableRowIndex) {
+        assert!(scroll_offset >= 0);
+        let scroll_offset_px = scroll_offset as u64 * self.line_height_px() as u64;
+        self.scroll_to_px(scroll_offset_px);
+    }
 
-        self.scroll_offset += delta_lines;
-        assert!(self.scroll_offset >= 0);
-
+    pub fn scroll_to_px(&mut self, new_scroll_offset_px: u64) {
         self.scroll_offset_px.animate_to(
-            self.scroll_offset_in_px() as f64,
-            SCROLL_DURATION,
+            new_scroll_offset_px as f64,
+            SCROLL_ANIMATION_DURATION,
             Interpolation::CubicOut,
         );
     }
 
-    fn scroll_offset_in_px(&self) -> i64 {
-        self.scroll_offset as i64 * self.line_height_px() as i64
+    /// The resting (finalized animation) scroll index.
+    ///
+    /// The _resting_ position is never negative.
+    fn resting_scroll_offset(&self) -> StableRowIndex {
+        // Detail: Using div_euclid here so that we can change this to support negative values.
+        self.resting_scroll_offset_px()
+            .div_euclid(self.line_height_px() as u64) as StableRowIndex
     }
 
-    fn current_scroll_offset_px(&self) -> i64 {
+    fn resting_scroll_offset_px(&self) -> u64 {
+        let resting = self.scroll_offset_px.final_value().round() as i64;
+        assert!(resting >= 0);
+        resting as u64
+    }
+
+    fn animating_scroll_offset_px(&self) -> i64 {
         self.scroll_offset_px.value().round() as i64
     }
 
@@ -172,11 +178,7 @@ impl TerminalView {
         // update the latest value yet.
 
         // Round to the nearest pixel, otherwise animated frames would not be pixel perfect.
-        let scroll_offset_px = self.current_scroll_offset_px();
-        trace!(
-            "Updating scroll offset: {scroll_offset_px} (apx line: {})",
-            scroll_offset_px / self.line_height_px() as i64
-        );
+        let scroll_offset_px = self.animating_scroll_offset_px();
         self.locations.set_scroll_offset_px(scroll_offset_px as u64);
     }
 
@@ -184,6 +186,8 @@ impl TerminalView {
     ///
     /// This returns the stable range of all the lines we need to update taking the current scrolling
     /// animation into account.
+    ///
+    /// This also means that the returned range might be out of range wrt the actual terminal lines.
     pub fn geometry(&self, terminal_geometry: &TerminalGeometry) -> ViewGeometry {
         let rows = terminal_geometry.rows();
         assert!(rows >= 1);
@@ -191,15 +195,16 @@ impl TerminalView {
         // First pixel visible inside the screen viewed.
         let line_height_px = self.font.cell_size_px().1 as i64;
 
-        let topmost_pixel_line_visible = self.current_scroll_offset_px();
-        let topmost_stable_render_line = topmost_pixel_line_visible / line_height_px;
-        let topmost_stable_render_line_anscend = topmost_pixel_line_visible % line_height_px;
+        let topmost_pixel_line_visible = self.animating_scroll_offset_px();
+        let topmost_stable_render_line = topmost_pixel_line_visible.div_euclid(line_height_px);
+        let topmost_stable_render_line_anscend =
+            topmost_pixel_line_visible.rem_euclid(line_height_px);
 
         // -1 because we want to hit the line the pixel is on and don't render more than row cells
         // if animations are done.
         let bottom_pixel_line_visible =
             (topmost_pixel_line_visible + line_height_px * rows as i64) - 1;
-        let bottom_stable_render_line = bottom_pixel_line_visible / line_height_px;
+        let bottom_stable_render_line = bottom_pixel_line_visible.div_euclid(line_height_px);
         assert!(bottom_stable_render_line >= topmost_stable_render_line);
 
         let stable_range = topmost_stable_render_line as StableRowIndex
@@ -369,7 +374,7 @@ impl TerminalView {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
                 let mut font_system = self.font_system.lock().unwrap();
-                self.line_to_shapes(&mut font_system, top as i64, line)?
+                self.line_to_shapes(&mut font_system, top, line)?
             };
 
             self.lines[line_index].visual.update_with(|v| {
@@ -566,7 +571,7 @@ impl TerminalView {
             CursorVisibility::Visible => {
                 let shape_type = Self::cursor_shape_type(pos.shape, window_focused);
                 // Detail: pos.y is a VisibleRowIndex.
-                let cursor_stable_line = pos.y as isize + self.scroll_offset;
+                let cursor_stable_line = pos.y as isize + self.resting_scroll_offset();
                 let (location, top_px) = self
                     .locations
                     .acquire_line_location(scene, cursor_stable_line);
@@ -592,7 +597,7 @@ impl TerminalView {
         }
     }
 
-    fn cursor_shape(&self, ty: CursorShapeType, column: usize, top_px: u64) -> Shape {
+    fn cursor_shape(&self, ty: CursorShapeType, column: usize, y_offset_px: i64) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font.cell_size_px();
         let left = cell_size.0 * column as u32;
@@ -605,7 +610,7 @@ impl TerminalView {
             CursorShapeType::Rect => {
                 return StrokeRect::new(
                     Rect::new(
-                        (left as _, top_px as _),
+                        (left as _, y_offset_px as _),
                         (cell_size.0 as _, cell_size.1 as _),
                     ),
                     Size::new(stroke_thickness, stroke_thickness),
@@ -614,18 +619,18 @@ impl TerminalView {
                 .into();
             }
             CursorShapeType::Block => Rect::new(
-                (left as _, top_px as _),
+                (left as _, y_offset_px as _),
                 (cell_size.0 as _, cell_size.1 as _),
             ),
             CursorShapeType::Underline => Rect::new(
                 (
                     left as _,
-                    ((top_px + self.font.ascender_px as u64) as f64) as _,
+                    ((y_offset_px + self.font.ascender_px as i64) as f64) as _,
                 ),
                 (cell_size.0 as _, stroke_thickness),
             ),
             CursorShapeType::Bar => Rect::new(
-                (left as _, top_px as _),
+                (left as _, y_offset_px as _),
                 (stroke_thickness, cell_size.1 as _),
             ),
         };
@@ -657,7 +662,7 @@ impl TerminalView {
                     .acquire_line_location(scene, location_stable_index);
 
                 let top_stable_px = location_stable_index as i64 * self.line_height_px() as i64;
-                let translation_offset = top_px as i64 - top_stable_px;
+                let translation_offset = top_px - top_stable_px;
 
                 let rects_final = rects_stable.iter().map(|r| {
                     r.to_f64()

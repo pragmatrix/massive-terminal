@@ -20,7 +20,7 @@ pub struct ScrollLocations {
     /// The current scroll offset in pixels.
     scroll_offset_px: u64,
     // Performance: Use a simple vec here.
-    locations: HashMap<BucketIndex, ScrollLocation>,
+    locations: HashMap<BucketKey, ScrollLocation>,
 }
 
 #[cfg(debug_assertions)]
@@ -51,22 +51,22 @@ impl ScrollLocations {
         &mut self,
         scene: &Scene,
         stable_index: StableRowIndex,
-    ) -> (Handle<Location>, u64) {
-        let bucket_index = Self::bucket_index(stable_index);
+    ) -> (Handle<Location>, i64) {
+        let bucket_key = Self::bucket_key(stable_index);
 
-        let line_height_px = self.line_height_px as u64;
-        let stable_line_offset_px = stable_index as u64 * line_height_px;
-        let bucket_stable_range = Self::bucket_stable_range(bucket_index);
+        let line_height_px = self.line_height_px as i64;
+        let stable_line_offset_px = stable_index as i64 * line_height_px;
+        let bucket_stable_range = Self::bucket_stable_range(bucket_key);
         // Absolute offset of the buckets first line.
-        let bucket_top_px = bucket_stable_range.start as u64 * line_height_px;
+        let bucket_top_px = bucket_stable_range.start as i64 * line_height_px;
         let line_offset_px = stable_line_offset_px - bucket_top_px;
 
         use std::collections::hash_map::Entry;
 
-        let location = match self.locations.entry(bucket_index) {
+        let location = match self.locations.entry(bucket_key) {
             Entry::Occupied(occupied) => occupied.into_mut().location.clone(),
             Entry::Vacant(vacant) => {
-                let matrix_scroll_offset_px = bucket_top_px as i64 - self.scroll_offset_px as i64;
+                let matrix_scroll_offset_px = bucket_top_px - self.scroll_offset_px as i64;
                 let matrix = scene.stage(Matrix::from_translation(
                     (0., matrix_scroll_offset_px as f64, 0.).into(),
                 ));
@@ -125,20 +125,19 @@ impl ScrollLocations {
     /// The bucket's base scroll offset.
     ///
     /// This added to the scroll offset in `ScrollLocation` makes up the final scroll offset.
-    fn bucket_base_scroll_offset(index: BucketIndex, line_height: u32) -> u64 {
+    fn bucket_base_scroll_offset(index: BucketKey, line_height: u32) -> u64 {
         let top = Self::bucket_stable_range(index).start;
         top as u64 * line_height as u64
     }
 
-    fn bucket_index(stable_index: StableRowIndex) -> BucketIndex {
-        assert!(stable_index >= 0);
-        (stable_index as usize / BUCKET_SIZE).into()
+    fn bucket_key(stable_index: StableRowIndex) -> BucketKey {
+        stable_index.div_euclid(BUCKET_SIZE as isize).into()
     }
 
-    fn bucket_stable_range(index: BucketIndex) -> Range<StableRowIndex> {
-        ((*index * BUCKET_SIZE) as isize).with_len(BUCKET_SIZE)
+    fn bucket_stable_range(index: BucketKey) -> Range<StableRowIndex> {
+        (*index * BUCKET_SIZE as isize).with_len(BUCKET_SIZE)
     }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deref, From)]
-struct BucketIndex(usize);
+struct BucketKey(isize);
