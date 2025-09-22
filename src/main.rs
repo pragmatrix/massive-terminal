@@ -31,7 +31,6 @@ use massive_shell::{
 mod input;
 mod logical_line;
 mod range_ops;
-mod selection;
 mod terminal;
 mod window_geometry;
 mod window_state;

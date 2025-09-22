@@ -24,8 +24,9 @@ use super::TerminalGeometry;
 use crate::{
     TerminalFont,
     range_ops::{RangeOps, WithLength},
-    selection::{NormalizedSelectionRange, SelectionRange},
-    terminal::{ViewGeometry, scroll_locations::ScrollLocations},
+    terminal::{
+        NormalizedSelectionRange, SelectionRange, ViewGeometry, scroll_locations::ScrollLocations,
+    },
     window_geometry::CellRect,
 };
 use massive_animation::{Animated, Interpolation};

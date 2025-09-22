@@ -11,8 +11,7 @@ use wezterm_term::{Line, StableRowIndex, Terminal};
 use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
-    selection::{Selection, SelectionPos},
-    terminal::TerminalGeometry,
+    terminal::{Selection, SelectionPos, TerminalGeometry},
     window_geometry::PixelPoint,
 };
 use massive_input::Progress;
@@ -23,7 +22,7 @@ use massive_shell::Scene;
 #[derive(Debug)]
 pub struct TerminalPresenter {
     geometry: TerminalGeometry,
-    // Architecture: The presenter should probably act as a facade to the unterlying terminal.
+    // Architecture: The presenter should probably act as a facade to the underlying terminal.
     #[debug(skip)]
     pub terminal: Arc<Mutex<Terminal>>,
 
@@ -180,7 +179,7 @@ impl TerminalPresenter {
         // Extend the range by the lines that have actually changed in the view range.
         //
         // Detail: Need to pass a valid terminal range, passing a larger range would return
-        // lines outside of the requested range because of internal aligment rules.
+        // lines outside of the requested range because of internal alignment rules.
         if terminal_updated && let Some(terminal_range) = terminal_view_lines {
             let changed = screen.get_changed_stable_rows(terminal_range, self.last_rendered_seq_no);
 
