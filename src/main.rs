@@ -144,7 +144,7 @@ impl MassiveTerminal {
 
         let _child = pty_pair.slave.spawn_command(cmd)?;
 
-        // Noone knows here what and when anything blocks, so we create two channels for writing and on
+        // No one knows here what and when anything blocks, so we create two channels for writing and on
         // for reading from the pty.
         // Send data to the pty by writing to the master
 
@@ -332,8 +332,8 @@ impl MassiveTerminal {
 
                     // Scroll?
                     if let Some(view_hit) = progress.proceeds() {
-                        let scroll = self.presenter.geometry().scroll_distance(*view_hit);
-                        if let Some(scroll) = scroll {
+                        let pixel_velocity = self.presenter.geometry().scroll_distance(*view_hit);
+                        if let Some(scroll) = pixel_velocity {
                             self.terminal_scroller.set_velocity(scroll);
                         }
                     }
@@ -432,7 +432,7 @@ impl MassiveTerminal {
 // Selection
 
 impl MassiveTerminal {
-    // Copied from wezterm_gui/src/terminwindow/selection.rs
+    // Copied from wezterm_gui/src/termwindow/selection.rs
 
     /// Returns the selected text
     pub fn selected_text(&self) -> String {

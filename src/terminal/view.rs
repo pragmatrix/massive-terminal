@@ -28,7 +28,7 @@ use crate::{
     terminal::{ViewGeometry, scroll_locations::ScrollLocations},
     window_geometry::CellRect,
 };
-use massive_animation::{Interpolation, Timeline};
+use massive_animation::{Animated, Interpolation};
 use massive_geometry::{Point, Rect, Size};
 use massive_scene::{Handle, Location, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
@@ -59,7 +59,7 @@ pub struct TerminalView {
     /// When the view scrolls up and a new line comes in on the bottom, this value increases.
     ///
     /// May be negative (while animating).
-    scroll_offset_px: Timeline<f64>,
+    scroll_offset_px: Animated<f64>,
 
     /// The first line's stable index in lines.
     first_line_stable_index: StableRowIndex,
@@ -113,7 +113,7 @@ impl TerminalView {
             font,
             color_palette: ColorPalette::default(),
             locations,
-            scroll_offset_px: scene.timeline(scroll_offset_px as f64),
+            scroll_offset_px: scene.animated(scroll_offset_px as f64),
             first_line_stable_index: 0,
             lines: VecDeque::new(),
             cursor: None,
@@ -174,7 +174,7 @@ impl TerminalView {
 
     /// Update currently running animations.
     pub fn apply_animations(&mut self) {
-        // Detail: Even if the timeline is not anymore animating, we might not have retrieved and
+        // Detail: Even if the animated value is not anymore animating, we might not have retrieved and
         // update the latest value yet.
 
         // Round to the nearest pixel, otherwise animated frames would not be pixel perfect.
@@ -197,7 +197,7 @@ impl TerminalView {
 
         let topmost_pixel_line_visible = self.animating_scroll_offset_px();
         let topmost_stable_render_line = topmost_pixel_line_visible.div_euclid(line_height_px);
-        let topmost_stable_render_line_anscend =
+        let topmost_stable_render_line_ascend =
             topmost_pixel_line_visible.rem_euclid(line_height_px);
 
         // -1 because we want to hit the line the pixel is on and don't render more than row cells
@@ -212,7 +212,7 @@ impl TerminalView {
 
         ViewGeometry {
             terminal: *terminal_geometry,
-            stable_range_ascend_px: topmost_stable_render_line_anscend as u32,
+            stable_range_ascend_px: topmost_stable_render_line_ascend as u32,
             stable_range,
         }
     }
@@ -277,8 +277,8 @@ impl ViewUpdate<'_> {
 impl TerminalView {
     /// This is the first step before lines can be updated.
     ///
-    /// This returns a set of stable index ranges that are _requied_ to be updated together with the
-    /// changed ones in the view_range.
+    /// This returns a set of stable index ranges that are _required_ to be updated together with
+    /// the changed ones in the view_range.
     ///
     /// This view_range is the one returned from `view_range()`.
     ///
@@ -486,7 +486,7 @@ impl TerminalView {
                 // support that ever, because the author holds the belief that subpixel rendering is a scam)
                 //
                 // Architecture: Research if we would actually benefit from subpixel rendering in
-                // inside a regular gray scale anti-alising setup.
+                // inside a regular gray scale anti-aliasing setup.
                 key: CacheKey {
                     font_id: glyph.font_id,
                     glyph_id: glyph.glyph_id,

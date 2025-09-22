@@ -1,7 +1,7 @@
 //! Scrolling control for terminals.
 use std::time::Duration;
 
-use massive_animation::{Interpolation, Timeline};
+use massive_animation::{Animated, Interpolation};
 use massive_shell::Scene;
 
 #[allow(unused)]
@@ -13,10 +13,10 @@ pub struct TerminalScroller {
     phase_out_duration: Duration,
 
     /// The current velocity in pixels per second.
-    velocity: Timeline<f64>,
+    velocity: Animated<f64>,
 
     /// The current scroll offset, either manually updated by the current velocity or animated.
-    scroll_offset: Timeline<f64>,
+    scroll_offset: Animated<f64>,
 
     state: ScrollAnimationState,
 }
@@ -32,8 +32,8 @@ enum ScrollAnimationState {
 #[allow(unused)]
 impl TerminalScroller {
     pub fn new(scene: &Scene, phase_in_duration: Duration, phase_out_duration: Duration) -> Self {
-        let velocity = scene.timeline(0.0);
-        let scroll_offset = scene.timeline(0.0);
+        let velocity = scene.animated(0.0);
+        let scroll_offset = scene.animated(0.0);
 
         Self {
             phase_in_duration,
