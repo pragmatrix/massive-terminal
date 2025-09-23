@@ -149,21 +149,6 @@ impl TerminalView {
         );
     }
 
-    /// The resting (finalized animation) scroll index.
-    ///
-    /// The _resting_ position is never negative.
-    fn resting_scroll_offset(&self) -> StableRowIndex {
-        // Detail: Using div_euclid here so that we can change this to support negative values.
-        self.resting_scroll_offset_px()
-            .div_euclid(self.line_height_px() as u64) as StableRowIndex
-    }
-
-    fn resting_scroll_offset_px(&self) -> u64 {
-        let resting = self.scroll_offset_px.final_value().round() as i64;
-        assert!(resting >= 0);
-        resting as u64
-    }
-
     fn animating_scroll_offset_px_snapped(&self) -> i64 {
         self.scroll_offset_px.value().round() as i64
     }

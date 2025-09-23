@@ -162,17 +162,17 @@ impl TerminalPresenter {
             .visible_row_to_stable_row(0)
             .with_len(screen.physical_rows);
 
-        // The range the terminal has line data for.
-        let terminal_full_stable_range = screen.phys_to_stable_row_index(0).with_len(
-            screen.scrollback_rows(), /* does include the visible part */
-        );
-
         // We need to scroll first, so that the visible range is up to date (even though this should
         // not make a difference when the view is currently animating, because animations are not
         // instantly applied).
         if self.auto_scroll {
             view.scroll_to_stable(terminal_visible_stable_range.start);
         }
+
+        // The range the terminal has line data for.
+        let terminal_full_stable_range = screen.phys_to_stable_row_index(0).with_len(
+            screen.scrollback_rows(), /* does include the visible part */
+        );
 
         // Get the range of lines the view is showing currently.
         let view_stable_range = view.geometry(&self.geometry).stable_range;
