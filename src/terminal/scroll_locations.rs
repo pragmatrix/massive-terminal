@@ -88,7 +88,7 @@ impl ScrollLocations {
         let line_height = self.line_height_px;
         self.locations.iter_mut().for_each(|(index, location)| {
             let base_offset = Self::bucket_base_scroll_offset(*index, line_height);
-            let new_scroll_offset = base_offset as i64 - scroll_offset_px;
+            let new_scroll_offset = base_offset - scroll_offset_px;
             if new_scroll_offset != location.matrix_scroll_offset_px {
                 location.matrix_scroll_offset_px = new_scroll_offset;
                 location
