@@ -72,7 +72,7 @@ impl TerminalGeometry {
     /// Decide if scrolling is needed and how many pixels the hit position lies away from.
     ///
     /// Negative values scroll up, positives, scroll down.
-    pub fn scroll_distance(&self, view_hit: PixelPoint) -> Option<f64> {
+    pub fn scroll_distance_px(&self, view_hit: PixelPoint) -> Option<f64> {
         let hit_y = view_hit.y;
 
         if hit_y < 0.0 {

@@ -4,6 +4,7 @@ use anyhow::Result;
 use derive_more::Debug;
 use log::{debug, info};
 
+use massive_animation::TimeScale;
 use parking_lot::Mutex;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{Line, StableRowIndex, Terminal};
@@ -33,6 +34,11 @@ pub struct TerminalPresenter {
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
     selection: Selection,
+    selection_scroller: Option<SelectionScroller>,
+
+    // true: Automatically scroll to the end of the terminal buffer.
+    auto_scroll: bool,
+
     view: TerminalView,
     alt_screen_active: bool,
 }
@@ -54,6 +60,10 @@ impl TerminalPresenter {
             temporary_line_buf: Vec::new(),
 
             selection: Default::default(),
+            selection_scroller: None,
+
+            auto_scroll: true,
+
             view,
             alt_screen_active: false,
         }
@@ -82,6 +92,18 @@ impl TerminalPresenter {
     /// Update the view lines, cursor, and selection.
     pub fn update(&mut self, window_state: &WindowState, scene: &Scene) -> Result<()> {
         let view = &mut self.view;
+
+        // First see if the selection wants to scroll the view.
+        // Architecture: This does not seem to belong here.
+        if let Some(scroller) = &mut self.selection_scroller {
+            assert!(!self.auto_scroll);
+            // Detail: We always scroll from the current scroll offset. This conflicts with the
+            // terminal's detected scrolling later, but will also guarantee, that a stable position
+            // is always reached..
+            let current = view.animating_scroll_offset_px();
+            let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
+            view.scroll_to_px(current + scaled_velocity);
+        }
 
         // Currently we need always apply view animations, otherwise the scroll matrix is not
         // in sync with the updated lines which results in flickering while scrolling (i.e.
@@ -141,9 +163,12 @@ impl TerminalPresenter {
             screen.scrollback_rows(), /* does include the visible part */
         );
 
-        // We need to scroll first, so that the visible range is up to date (even though this
-        // should not make a difference when the view is currently animating).
-        view.scroll_to_stable(terminal_visible_stable_range.start);
+        // We need to scroll first, so that the visible range is up to date (even though this should
+        // not make a difference when the view is currently animating, because animations are not
+        // instantly applied).
+        if self.auto_scroll {
+            view.scroll_to_stable(terminal_visible_stable_range.start);
+        }
 
         // Get the range of lines the view is showing currently.
         let view_stable_range = view.geometry(&self.geometry).stable_range;
@@ -298,14 +323,35 @@ impl TerminalPresenter {
         self.selection.can_progress()
     }
 
-    pub fn selection_progress(&mut self, progress: Progress<PixelPoint>) {
+    const PIXEL_TO_SCROLL_VELOCITY_PER_SECOND: f64 = 16.0;
+
+    pub fn selection_progress(&mut self, scene: &Scene, progress: Progress<PixelPoint>) {
         match progress {
-            Progress::Proceed(cell_hit) => {
+            Progress::Proceed(view_hit) => {
+                // Scroll?
+                if let Some(view_hit) = progress.proceeds() {
+                    let pixel_velocity = self.geometry().scroll_distance_px(*view_hit);
+                    if let Some(velocity) = pixel_velocity {
+                        self.scroll_selection(
+                            scene,
+                            velocity * Self::PIXEL_TO_SCROLL_VELOCITY_PER_SECOND,
+                        )
+                    } else {
+                        self.clear_selection_scroller()
+                    }
+                }
+
                 self.selection
-                    .progress(self.pixel_coords_to_selection_pos(cell_hit));
+                    .progress(self.pixel_coords_to_selection_pos(view_hit));
             }
-            Progress::Commit => self.selection.end(),
-            Progress::Cancel => self.selection.reset(),
+            Progress::Commit => {
+                self.clear_selection_scroller();
+                self.selection.end()
+            }
+            Progress::Cancel => {
+                self.clear_selection_scroller();
+                self.selection.reset()
+            }
         }
     }
 
@@ -315,4 +361,30 @@ impl TerminalPresenter {
 
         SelectionPos::new(column.max(0) as usize, stable_row)
     }
+
+    // Selection Scrolling
+
+    fn scroll_selection(&mut self, scene: &Scene, velocity: f64) {
+        self.auto_scroll = false;
+        match &mut self.selection_scroller {
+            Some(scroller) => scroller.velocity = velocity,
+            None => {
+                self.selection_scroller = Some(SelectionScroller {
+                    velocity,
+                    time_scale: scene.time_scale(),
+                })
+            }
+        }
+    }
+
+    fn clear_selection_scroller(&mut self) {
+        // TODO: define a resting point
+        self.selection_scroller = None;
+    }
+}
+
+#[derive(Debug)]
+struct SelectionScroller {
+    velocity: f64,
+    time_scale: TimeScale,
 }

@@ -10,6 +10,7 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
+use log::debug;
 use rangeset::RangeSet;
 use tuple::Map;
 
@@ -59,10 +60,10 @@ pub struct TerminalView {
     ///
     /// When the view scrolls up and a new line comes in on the bottom, this value increases.
     ///
-    /// May be negative (while animating).
+    /// May be negative while animating.
     scroll_offset_px: Animated<f64>,
 
-    /// The first line's stable index in lines.
+    /// The first line's stable index in  visible lines.
     first_line_stable_index: StableRowIndex,
 
     /// The visible lines. This contains _only_ the lines currently visible in the terminal.
@@ -107,7 +108,8 @@ impl TerminalView {
         let line_height = font.cell_size_px().1;
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * line_height as u64;
-        let locations = ScrollLocations::new(parent_location, line_height, scroll_offset_px);
+        let locations =
+            ScrollLocations::new(parent_location, line_height, scroll_offset_px.cast_signed());
 
         Self {
             font_system,
@@ -130,12 +132,18 @@ impl TerminalView {
     pub fn scroll_to_stable(&mut self, scroll_offset: StableRowIndex) {
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * self.line_height_px() as u64;
-        self.scroll_to_px(scroll_offset_px);
+        self.scroll_to_px(scroll_offset_px as f64);
     }
 
-    pub fn scroll_to_px(&mut self, new_scroll_offset_px: u64) {
-        self.scroll_offset_px.animate_to(
-            new_scroll_offset_px as f64,
+    /// Scroll to the pixel offset.
+    ///
+    /// Detail: Even though we never render the final output at fractional pixels, the animation's
+    /// final value can be fractional, too. For example while a selection scroll is active.
+    ///
+    /// As soon a resting position is defined, the final value should be set to a integral value.
+    pub fn scroll_to_px(&mut self, new_scroll_offset_px: f64) {
+        self.scroll_offset_px.animate_to_if_changed(
+            new_scroll_offset_px,
             SCROLL_ANIMATION_DURATION,
             Interpolation::CubicOut,
         );
@@ -156,8 +164,13 @@ impl TerminalView {
         resting as u64
     }
 
-    fn animating_scroll_offset_px(&self) -> i64 {
+    fn animating_scroll_offset_px_snapped(&self) -> i64 {
         self.scroll_offset_px.value().round() as i64
+    }
+
+    /// Returns the current fractional scroll offset in pixel.
+    pub fn animating_scroll_offset_px(&self) -> f64 {
+        self.scroll_offset_px.value()
     }
 
     fn line_height_px(&self) -> u32 {
@@ -178,9 +191,9 @@ impl TerminalView {
         // Detail: Even if the animated value is not anymore animating, we might not have retrieved and
         // update the latest value yet.
 
-        // Round to the nearest pixel, otherwise animated frames would not be pixel perfect.
-        let scroll_offset_px = self.animating_scroll_offset_px();
-        self.locations.set_scroll_offset_px(scroll_offset_px as u64);
+        // Snap to the nearest pixel, otherwise animated frames would not be pixel perfect.
+        let scroll_offset_px = self.animating_scroll_offset_px_snapped();
+        self.locations.set_scroll_offset_px(scroll_offset_px);
     }
 
     /// Return the current geometry of the view.
@@ -196,7 +209,7 @@ impl TerminalView {
         // First pixel visible inside the screen viewed.
         let line_height_px = self.font.cell_size_px().1 as i64;
 
-        let topmost_pixel_line_visible = self.animating_scroll_offset_px();
+        let topmost_pixel_line_visible = self.animating_scroll_offset_px_snapped();
         let topmost_stable_render_line = topmost_pixel_line_visible.div_euclid(line_height_px);
         let topmost_stable_render_line_ascend =
             topmost_pixel_line_visible.rem_euclid(line_height_px);

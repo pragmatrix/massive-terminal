@@ -18,7 +18,7 @@ pub struct ScrollLocations {
     parent: Handle<Location>,
     line_height_px: u32,
     /// The current scroll offset in pixels.
-    scroll_offset_px: u64,
+    scroll_offset_px: i64,
     // Performance: Use a simple vec here.
     locations: HashMap<BucketKey, ScrollLocation>,
 }
@@ -37,7 +37,7 @@ struct ScrollLocation {
 }
 
 impl ScrollLocations {
-    pub fn new(parent: Handle<Location>, line_height_px: u32, scroll_offset_px: u64) -> Self {
+    pub fn new(parent: Handle<Location>, line_height_px: u32, scroll_offset_px: i64) -> Self {
         Self {
             parent,
             line_height_px,
@@ -84,7 +84,7 @@ impl ScrollLocations {
     }
 
     /// Scroll the _current_ scroll offset of all matrices to the pixel location.
-    pub fn set_scroll_offset_px(&mut self, scroll_offset_px: u64) {
+    pub fn set_scroll_offset_px(&mut self, scroll_offset_px: i64) {
         let line_height = self.line_height_px;
         self.locations.iter_mut().for_each(|(index, location)| {
             let base_offset = Self::bucket_base_scroll_offset(*index, line_height);
