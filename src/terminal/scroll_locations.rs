@@ -125,9 +125,9 @@ impl ScrollLocations {
     /// The bucket's base scroll offset.
     ///
     /// This added to the scroll offset in `ScrollLocation` makes up the final scroll offset.
-    fn bucket_base_scroll_offset(index: BucketKey, line_height: u32) -> u64 {
+    fn bucket_base_scroll_offset(index: BucketKey, line_height: u32) -> i64 {
         let top = Self::bucket_stable_range(index).start;
-        top as u64 * line_height as u64
+        top as i64 * line_height as i64
     }
 
     fn bucket_key(stable_index: StableRowIndex) -> BucketKey {
