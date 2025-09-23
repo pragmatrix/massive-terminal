@@ -125,6 +125,9 @@ impl TerminalPresenter {
         let columns = screen.physical_cols;
 
         // Switch between primary and alt screen.
+        //
+        // Architecture: If we do switch here, we overwrite all scrolling / apply animations done
+        // above, this seems broken.
         {
             let alt_screen_active = terminal.is_alt_screen_active();
             if alt_screen_active != self.alt_screen_active {
