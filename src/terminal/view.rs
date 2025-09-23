@@ -651,13 +651,14 @@ impl TerminalView {
         terminal_geometry: &TerminalGeometry,
     ) {
         match selection {
-            Some(selection) => {
+            Some(selection_range) => {
                 // Robustness: A selection can span a lot of lines here, even the ones outside. To
                 // keep the numerical stability in the matrix, we should clip the rects to the
                 // visible range.
-                let rects_stable = Self::selection_rects(&selection, terminal_geometry.columns());
+                let rects_stable =
+                    Self::selection_rects(&selection_range, terminal_geometry.columns());
                 let cell_size = terminal_geometry.cell_size_px.map(f64::from);
-                let location_stable_index = selection.stable_rows().start;
+                let location_stable_index = selection_range.stable_rows().start;
 
                 let (location, top_px) = self
                     .locations
@@ -683,11 +684,12 @@ impl TerminalView {
                 //
                 match &mut self.selection {
                     Some(selection) => {
+                        selection.row_range = selection_range.stable_rows();
                         selection.visual.update_if_changed(visual);
                     }
                     None => {
                         self.selection = Some(SelectionVisual {
-                            row_range: selection.stable_rows(),
+                            row_range: selection_range.stable_rows(),
                             visual: scene.stage(visual),
                         })
                     }
