@@ -66,7 +66,7 @@ impl ScrollLocations {
         let location = match self.locations.entry(bucket_key) {
             Entry::Occupied(occupied) => occupied.into_mut().location.clone(),
             Entry::Vacant(vacant) => {
-                let matrix_scroll_offset_px = bucket_top_px - self.scroll_offset_px as i64;
+                let matrix_scroll_offset_px = bucket_top_px - self.scroll_offset_px;
                 let matrix = scene.stage(Matrix::from_translation(
                     (0., matrix_scroll_offset_px as f64, 0.).into(),
                 ));
@@ -88,7 +88,7 @@ impl ScrollLocations {
         let line_height = self.line_height_px;
         self.locations.iter_mut().for_each(|(index, location)| {
             let base_offset = Self::bucket_base_scroll_offset(*index, line_height);
-            let new_scroll_offset = base_offset as i64 - scroll_offset_px as i64;
+            let new_scroll_offset = base_offset as i64 - scroll_offset_px;
             if new_scroll_offset != location.matrix_scroll_offset_px {
                 location.matrix_scroll_offset_px = new_scroll_offset;
                 location

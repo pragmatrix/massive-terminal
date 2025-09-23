@@ -10,7 +10,6 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
-use log::debug;
 use rangeset::RangeSet;
 use tuple::Map;
 
