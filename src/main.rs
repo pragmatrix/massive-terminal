@@ -362,7 +362,9 @@ impl MassiveTerminal {
                                 self.paste()?
                             }
                             _ => {
+                                // Architecture: Should probably move into the presenter which owns terminal now.
                                 self.terminal().lock().key_down(key, modifiers)?;
+                                self.presenter.enable_autoscroll();
                             }
                         },
                         ElementState::Released => {
@@ -412,6 +414,7 @@ impl MassiveTerminal {
         let text = self.clipboard.get_text()?;
         if !text.is_empty() {
             self.terminal().lock().send_paste(&text)?;
+            self.presenter.enable_autoscroll();
         }
         Ok(())
     }

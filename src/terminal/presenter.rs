@@ -73,6 +73,10 @@ impl TerminalPresenter {
         &self.geometry
     }
 
+    pub fn enable_autoscroll(&mut self) {
+        self.auto_scroll = true;
+    }
+
     // Returns `true` if the terminal size in cells changed.
     pub fn resize(&mut self, new_size_px: (u32, u32)) -> Result<bool> {
         let mut new_geometry = self.geometry;
@@ -249,6 +253,7 @@ impl TerminalPresenter {
         }
 
         let cursor_pos = terminal.cursor_pos();
+        let cursor_stable_y = terminal_visible_stable_range.start + cursor_pos.y as StableRowIndex;
 
         // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
         // changes can be pushed to it as fast as possible.
@@ -286,7 +291,7 @@ impl TerminalPresenter {
 
         // Update cursor and selection
 
-        view_update.cursor(cursor_pos, window_state.focused);
+        view_update.cursor(cursor_pos, cursor_stable_y, window_state.focused);
 
         {
             // Clear the selection if changes intersect it and the user does not interact with it.

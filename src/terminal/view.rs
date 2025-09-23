@@ -274,8 +274,9 @@ impl ViewUpdate<'_> {
         self.view.update_lines(first_line_stable_index, lines)
     }
 
-    pub fn cursor(&mut self, pos: CursorPosition, window_focused: bool) {
-        self.view.update_cursor(self.scene, pos, window_focused);
+    pub fn cursor(&mut self, pos: CursorPosition, stable: StableRowIndex, window_focused: bool) {
+        self.view
+            .update_cursor(self.scene, pos, stable, window_focused);
     }
 
     pub fn selection(
@@ -577,7 +578,13 @@ enum CursorShapeType {
 }
 
 impl TerminalView {
-    fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, window_focused: bool) {
+    fn update_cursor(
+        &mut self,
+        scene: &Scene,
+        pos: CursorPosition,
+        stable: StableRowIndex,
+        window_focused: bool,
+    ) {
         match pos.visibility {
             CursorVisibility::Hidden => {
                 self.cursor = None;
@@ -585,10 +592,7 @@ impl TerminalView {
             CursorVisibility::Visible => {
                 let shape_type = Self::cursor_shape_type(pos.shape, window_focused);
                 // Detail: pos.y is a VisibleRowIndex.
-                let cursor_stable_line = pos.y as isize + self.resting_scroll_offset();
-                let (location, top_px) = self
-                    .locations
-                    .acquire_line_location(scene, cursor_stable_line);
+                let (location, top_px) = self.locations.acquire_line_location(scene, stable);
                 let shape = self.cursor_shape(shape_type, pos.x, top_px);
                 self.cursor = Some(scene.stage(Visual::new(location, [shape])));
             }
