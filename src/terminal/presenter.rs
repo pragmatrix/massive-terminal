@@ -29,17 +29,15 @@ pub struct TerminalPresenter {
     #[debug(skip)]
     pub terminal: Arc<Mutex<Terminal>>,
 
+    scroll_state: ScrollState,
+    selection: Selection,
+
     #[debug(skip)]
     #[allow(clippy::type_complexity)]
     view_gen: Box<dyn Fn(&Scene, StableRowIndex) -> TerminalView + Send>,
 
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
-    selection: Selection,
-    selection_scroller: Option<SelectionScroller>,
-
-    // true: Automatically scroll to the end of the terminal buffer.
-    auto_scroll: bool,
 
     view: TerminalView,
     alt_screen_active: bool,
@@ -57,14 +55,13 @@ impl TerminalPresenter {
         Self {
             geometry,
             terminal: Mutex::new(terminal).into(),
+
+            scroll_state: Default::default(),
+            selection: Default::default(),
+
             view_gen: Box::new(view_gen),
             last_rendered_seq_no,
             temporary_line_buf: Vec::new(),
-
-            selection: Default::default(),
-            selection_scroller: None,
-
-            auto_scroll: true,
 
             view,
             alt_screen_active: false,
@@ -76,7 +73,7 @@ impl TerminalPresenter {
     }
 
     pub fn enable_autoscroll(&mut self) {
-        self.auto_scroll = true;
+        self.scroll_state = ScrollState::Auto;
     }
 
     // Returns `true` if the terminal size in cells changed.
@@ -97,18 +94,6 @@ impl TerminalPresenter {
 
     /// Update the view lines, cursor, and selection.
     pub fn update(&mut self, window_state: &WindowState, scene: &Scene) -> Result<()> {
-        // First see if the selection wants to scroll the view.
-        // Architecture: This does not seem to belong here.
-        if let Some(scroller) = &mut self.selection_scroller {
-            assert!(!self.auto_scroll);
-            // Detail: We always scroll from the current scroll offset. This conflicts with the
-            // terminal's detected scrolling later, but will also guarantee, that a stable position
-            // is always reached..
-            let current = self.view.animating_scroll_offset_px();
-            let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
-            self.view.scroll_to_px(current + scaled_velocity);
-        }
-
         // Currently we need always apply view animations, otherwise the scroll matrix is not
         // in sync with the updated lines which results in flickering while scrolling (i.e.
         // lines disappearing too early when scrolling up).
@@ -123,7 +108,6 @@ impl TerminalPresenter {
 
         let terminal = self.terminal.lock();
         let screen = terminal.screen();
-        let columns = screen.physical_cols;
         let view = &mut self.view;
 
         // Switch between primary and alt screen.
@@ -170,8 +154,18 @@ impl TerminalPresenter {
         // We need to scroll first, so that the visible range is up to date (even though this should
         // not make a difference when the view is currently animating, because animations are not
         // instantly applied).
-        if self.auto_scroll {
-            view.scroll_to_stable(terminal_visible_stable_range.start);
+        match &mut self.scroll_state {
+            ScrollState::Auto => {
+                view.scroll_to_stable(terminal_visible_stable_range.start);
+            }
+            ScrollState::Resting(stable_row) => {
+                view.scroll_to_stable(*stable_row);
+            }
+            ScrollState::SelectionScroll(scroller) => {
+                let current = view.animating_scroll_offset_px();
+                let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
+                view.scroll_to_px(current + scaled_velocity);
+            }
         }
 
         // The range the terminal has line data for.
@@ -259,6 +253,7 @@ impl TerminalPresenter {
 
         let cursor_pos = terminal.cursor_pos();
         let cursor_stable_y = terminal_visible_stable_range.start + cursor_pos.y as StableRowIndex;
+        let columns = screen.physical_cols;
 
         // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
         // changes can be pushed to it as fast as possible.
@@ -388,11 +383,10 @@ impl TerminalPresenter {
     // Selection Scrolling
 
     fn scroll_selection(&mut self, scene: &Scene, velocity: f64) {
-        self.auto_scroll = false;
-        match &mut self.selection_scroller {
-            Some(scroller) => scroller.velocity = velocity,
-            None => {
-                self.selection_scroller = Some(SelectionScroller {
+        match &mut self.scroll_state {
+            ScrollState::SelectionScroll(scroller) => scroller.velocity = velocity,
+            state => {
+                *state = ScrollState::SelectionScroll(SelectionScroller {
                     velocity,
                     time_scale: scene.time_scale(),
                 })
@@ -401,9 +395,21 @@ impl TerminalPresenter {
     }
 
     fn clear_selection_scroller(&mut self) {
-        // TODO: define a resting point
-        self.selection_scroller = None;
+        // Precision: Should probably rest on the nearest stable line, not the topmost visible?
+        let current_stable_top = self.view.geometry(&self.geometry).stable_range.start.max(0);
+        self.scroll_state = ScrollState::Resting(current_stable_top);
     }
+}
+
+#[derive(Debug, Default)]
+enum ScrollState {
+    /// Automatically scroll to the cursor position / last line.
+    #[default]
+    Auto,
+    /// We are at a stable resting position.
+    Resting(StableRowIndex),
+    /// The selection is currently controlling the scrolling with a particular velocity.
+    SelectionScroll(SelectionScroller),
 }
 
 #[derive(Debug)]
