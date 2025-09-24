@@ -333,16 +333,14 @@ impl TerminalPresenter {
         match progress {
             Progress::Proceed(view_hit) => {
                 // Scroll?
-                if let Some(view_hit) = progress.proceeds() {
-                    let pixel_velocity = self.geometry().scroll_distance_px(*view_hit);
-                    if let Some(velocity) = pixel_velocity {
-                        self.scroll_selection(
-                            scene,
-                            velocity * Self::PIXEL_TO_SCROLL_VELOCITY_PER_SECOND,
-                        )
-                    } else {
-                        self.clear_selection_scroller()
-                    }
+                let pixel_velocity = self.geometry().scroll_distance_px(view_hit);
+                if let Some(velocity) = pixel_velocity {
+                    self.scroll_selection(
+                        scene,
+                        velocity * Self::PIXEL_TO_SCROLL_VELOCITY_PER_SECOND,
+                    )
+                } else {
+                    self.clear_selection_scroller()
                 }
 
                 self.selection.progress(view_hit);
