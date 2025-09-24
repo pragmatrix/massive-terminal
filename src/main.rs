@@ -246,14 +246,14 @@ impl MassiveTerminal {
             // Performance: We begin an update cycle whenever the terminal advances, too. This
             // should probably be done asynchronously, deferred, etc. But note that the renderer is
             // also running asynchronously at the end of the update cycle.
+            //
+            // Architecture: We need to enforce running animations _inside_ the update cycle
+            // somehow. Otherwise this can lead to confusing bugs, for example if the following code
+            // does run before begin_update_cycle().
             let _cycle = self
                 .scene
                 .begin_update_cycle(&mut self.renderer, shell_event_opt.as_ref())?;
 
-            // Architecture: We need to enforce running animations _inside_ the update cycle
-            // somehow. Otherwise this can lead to confusing bugs, for example if the following code
-            // does run before begin_update_cycle().
-            //
             // Idea: Make shell_event opaque and allow checking for animations update in UpdateCycle
             // that is returned from begin_update_cycle()?
             if matches!(shell_event_opt, Some(ShellEvent::ApplyAnimations)) {
@@ -262,7 +262,7 @@ impl MassiveTerminal {
             }
 
             {
-                // Update lines & cursor
+                // Update lines & cursor.
 
                 self.presenter.update(&self.window_state, &self.scene)?;
             }
@@ -329,19 +329,8 @@ impl MassiveTerminal {
                 if let Some(progress) = movement.track_to(&ev) {
                     let progress = progress.map_or_cancel(hit_view_matrix);
 
-                    // Scroll?
-                    if let Some(view_hit) = progress.proceeds() {
-                        let pixel_velocity = self.presenter.geometry().scroll_distance(*view_hit);
-                        if let Some(scroll) = pixel_velocity {
-                            self.terminal_scroller.set_velocity(scroll);
-                        }
-                    }
-
-                    // Map to selection.
-                    // Robustness: Should we support negative cell hits, so that the selection can always progress here?
-
                     assert!(self.presenter.selection_can_progress());
-                    self.presenter.selection_progress(progress);
+                    self.presenter.selection_progress(&self.scene, progress);
 
                     if progress.ends() {
                         self.selecting = None;
@@ -373,7 +362,9 @@ impl MassiveTerminal {
                                 self.paste()?
                             }
                             _ => {
+                                // Architecture: Should probably move into the presenter which owns terminal now.
                                 self.terminal().lock().key_down(key, modifiers)?;
+                                self.presenter.enable_autoscroll();
                             }
                         },
                         ElementState::Released => {
@@ -423,6 +414,7 @@ impl MassiveTerminal {
         let text = self.clipboard.get_text()?;
         if !text.is_empty() {
             self.terminal().lock().send_paste(&text)?;
+            self.presenter.enable_autoscroll();
         }
         Ok(())
     }
@@ -438,7 +430,7 @@ impl MassiveTerminal {
         let mut s = String::new();
         // Feature: Rectangular selection.
         let rectangular = false;
-        let Some(sel) = self.presenter.selection().range() else {
+        let Some(sel) = self.presenter.selection_range() else {
             return s;
         };
         let mut last_was_wrapped = false;

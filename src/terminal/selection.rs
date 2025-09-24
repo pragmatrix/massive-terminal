@@ -4,68 +4,84 @@ use derive_more::Deref;
 use log::error;
 use wezterm_term::StableRowIndex;
 
-use crate::{range_ops::RangeOps, window_geometry::CellPoint};
+use crate::{
+    range_ops::RangeOps,
+    window_geometry::{CellPoint, PixelPoint},
+};
 
 #[derive(Debug, Default)]
-pub struct Selection {
-    state: SelectionState,
+pub enum Selection {
+    #[default]
+    Unselected,
+    Begun {
+        pos: SelectionPos,
+    },
+    // We store the ending position as pixel point, because the selection might change when the view
+    // is scrolled, but the starting point always needs to point on the cell originally selected.
+    Selecting {
+        from: SelectionPos,
+        to: PixelPoint,
+    },
+    Selected {
+        from: SelectionPos,
+        to: SelectionPos,
+    },
 }
 
 impl Selection {
     pub fn begin(&mut self, pos: SelectionPos) {
-        self.state = SelectionState::Begun { pos }
+        *self = Self::Begun { pos }
     }
 
     pub fn can_progress(&self) -> bool {
-        matches!(
-            self.state,
-            SelectionState::Begun { .. } | SelectionState::Selecting { .. }
-        )
+        matches!(self, Self::Begun { .. } | Self::Selecting { .. })
     }
 
-    pub fn progress(&mut self, ending_pos: SelectionPos) {
-        self.state = match &self.state {
-            SelectionState::Begun { pos } => {
-                SelectionState::Selecting(SelectionRange::new(*pos, ending_pos))
-            }
-            SelectionState::Selecting(SelectionRange { start, .. }) => {
-                SelectionState::Selecting(SelectionRange::new(*start, ending_pos))
-            }
+    pub fn progress(&mut self, end: PixelPoint) {
+        *self = match &self {
+            Self::Begun { pos } => Self::Selecting {
+                from: *pos,
+                to: end,
+            },
+            Self::Selecting { from: start, .. } => Self::Selecting {
+                from: *start,
+                to: end,
+            },
             _ => {
                 error!(
                     "Internal error: Selection is progressing, but state is {:?}",
-                    self.state
+                    self
                 );
-                SelectionState::Unselected
+                Self::Unselected
             }
         };
     }
 
-    pub fn end(&mut self) {
-        self.state = match &self.state {
-            SelectionState::Begun { .. } => SelectionState::Unselected,
-            SelectionState::Selecting(range) => SelectionState::Selected(range.normalized()),
+    /// Ends the selection and returns the pixel point the cursor was last at.
+    #[must_use]
+    pub fn selecting_end(&self) -> Option<PixelPoint> {
+        match self {
+            Self::Selecting { to, .. } => Some(*to),
+            _ => None,
+        }
+    }
+
+    pub fn end(&mut self, to: SelectionPos) {
+        *self = match &self {
+            Self::Begun { .. } => Self::Unselected,
+            Self::Selecting { from, .. } => Self::Selected { from: *from, to },
             _ => {
                 error!(
                     "Internal error: Selection is ending, but state is {:?}",
-                    self.state
+                    self
                 );
-                SelectionState::Unselected
+                Self::Unselected
             }
         }
     }
 
     pub fn reset(&mut self) {
-        self.state = SelectionState::Unselected;
-    }
-
-    // Normalized selection range
-    pub fn range(&self) -> Option<NormalizedSelectionRange> {
-        match self.state {
-            SelectionState::Selecting(range) => Some(range.normalized()),
-            SelectionState::Selected(range) => Some(range),
-            _ => None,
-        }
+        *self = Self::Unselected;
     }
 }
 
@@ -90,17 +106,6 @@ impl SelectionPos {
         assert!(self.row >= 0);
         (self.column, self.row as usize).into()
     }
-}
-
-#[derive(Debug, Default)]
-pub enum SelectionState {
-    #[default]
-    Unselected,
-    Begun {
-        pos: SelectionPos,
-    },
-    Selecting(SelectionRange),
-    Selected(NormalizedSelectionRange),
 }
 
 /// Selection range.

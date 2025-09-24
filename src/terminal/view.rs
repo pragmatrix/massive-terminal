@@ -59,10 +59,10 @@ pub struct TerminalView {
     ///
     /// When the view scrolls up and a new line comes in on the bottom, this value increases.
     ///
-    /// May be negative (while animating).
+    /// May be negative while animating.
     scroll_offset_px: Animated<f64>,
 
-    /// The first line's stable index in lines.
+    /// The first line's stable index in visible lines.
     first_line_stable_index: StableRowIndex,
 
     /// The visible lines. This contains _only_ the lines currently visible in the terminal.
@@ -107,7 +107,8 @@ impl TerminalView {
         let line_height = font.cell_size_px().1;
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * line_height as u64;
-        let locations = ScrollLocations::new(parent_location, line_height, scroll_offset_px);
+        let locations =
+            ScrollLocations::new(parent_location, line_height, scroll_offset_px.cast_signed());
 
         Self {
             font_system,
@@ -130,34 +131,30 @@ impl TerminalView {
     pub fn scroll_to_stable(&mut self, scroll_offset: StableRowIndex) {
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * self.line_height_px() as u64;
-        self.scroll_to_px(scroll_offset_px);
+        self.scroll_to_px(scroll_offset_px as f64);
     }
 
-    pub fn scroll_to_px(&mut self, new_scroll_offset_px: u64) {
-        self.scroll_offset_px.animate_to(
-            new_scroll_offset_px as f64,
+    /// Scroll to the pixel offset.
+    ///
+    /// Detail: Even though we never render the final output at fractional pixels, the animation's
+    /// final value can be fractional, too. For example while a selection scroll is active.
+    ///
+    /// As soon a resting position is defined, the final value should be set to a integral value.
+    pub fn scroll_to_px(&mut self, new_scroll_offset_px: f64) {
+        self.scroll_offset_px.animate_to_if_changed(
+            new_scroll_offset_px,
             SCROLL_ANIMATION_DURATION,
             Interpolation::CubicOut,
         );
     }
 
-    /// The resting (finalized animation) scroll index.
-    ///
-    /// The _resting_ position is never negative.
-    fn resting_scroll_offset(&self) -> StableRowIndex {
-        // Detail: Using div_euclid here so that we can change this to support negative values.
-        self.resting_scroll_offset_px()
-            .div_euclid(self.line_height_px() as u64) as StableRowIndex
-    }
-
-    fn resting_scroll_offset_px(&self) -> u64 {
-        let resting = self.scroll_offset_px.final_value().round() as i64;
-        assert!(resting >= 0);
-        resting as u64
-    }
-
-    fn animating_scroll_offset_px(&self) -> i64 {
+    fn animating_scroll_offset_px_snapped(&self) -> i64 {
         self.scroll_offset_px.value().round() as i64
+    }
+
+    /// Returns the current fractional scroll offset in pixel.
+    pub fn animating_scroll_offset_px(&self) -> f64 {
+        self.scroll_offset_px.value()
     }
 
     fn line_height_px(&self) -> u32 {
@@ -178,9 +175,9 @@ impl TerminalView {
         // Detail: Even if the animated value is not anymore animating, we might not have retrieved and
         // update the latest value yet.
 
-        // Round to the nearest pixel, otherwise animated frames would not be pixel perfect.
-        let scroll_offset_px = self.animating_scroll_offset_px();
-        self.locations.set_scroll_offset_px(scroll_offset_px as u64);
+        // Snap to the nearest pixel, otherwise animated frames would not be pixel perfect.
+        let scroll_offset_px = self.animating_scroll_offset_px_snapped();
+        self.locations.set_scroll_offset_px(scroll_offset_px);
     }
 
     /// Return the current geometry of the view.
@@ -196,7 +193,7 @@ impl TerminalView {
         // First pixel visible inside the screen viewed.
         let line_height_px = self.font.cell_size_px().1 as i64;
 
-        let topmost_pixel_line_visible = self.animating_scroll_offset_px();
+        let topmost_pixel_line_visible = self.animating_scroll_offset_px_snapped();
         let topmost_stable_render_line = topmost_pixel_line_visible.div_euclid(line_height_px);
         let topmost_stable_render_line_ascend =
             topmost_pixel_line_visible.rem_euclid(line_height_px);
@@ -261,8 +258,9 @@ impl ViewUpdate<'_> {
         self.view.update_lines(first_line_stable_index, lines)
     }
 
-    pub fn cursor(&mut self, pos: CursorPosition, window_focused: bool) {
-        self.view.update_cursor(self.scene, pos, window_focused);
+    pub fn cursor(&mut self, pos: CursorPosition, stable: StableRowIndex, window_focused: bool) {
+        self.view
+            .update_cursor(self.scene, pos, stable, window_focused);
     }
 
     pub fn selection(
@@ -564,7 +562,13 @@ enum CursorShapeType {
 }
 
 impl TerminalView {
-    fn update_cursor(&mut self, scene: &Scene, pos: CursorPosition, window_focused: bool) {
+    fn update_cursor(
+        &mut self,
+        scene: &Scene,
+        pos: CursorPosition,
+        stable: StableRowIndex,
+        window_focused: bool,
+    ) {
         match pos.visibility {
             CursorVisibility::Hidden => {
                 self.cursor = None;
@@ -572,10 +576,7 @@ impl TerminalView {
             CursorVisibility::Visible => {
                 let shape_type = Self::cursor_shape_type(pos.shape, window_focused);
                 // Detail: pos.y is a VisibleRowIndex.
-                let cursor_stable_line = pos.y as isize + self.resting_scroll_offset();
-                let (location, top_px) = self
-                    .locations
-                    .acquire_line_location(scene, cursor_stable_line);
+                let (location, top_px) = self.locations.acquire_line_location(scene, stable);
                 let shape = self.cursor_shape(shape_type, pos.x, top_px);
                 self.cursor = Some(scene.stage(Visual::new(location, [shape])));
             }
@@ -650,13 +651,14 @@ impl TerminalView {
         terminal_geometry: &TerminalGeometry,
     ) {
         match selection {
-            Some(selection) => {
+            Some(selection_range) => {
                 // Robustness: A selection can span a lot of lines here, even the ones outside. To
                 // keep the numerical stability in the matrix, we should clip the rects to the
                 // visible range.
-                let rects_stable = Self::selection_rects(&selection, terminal_geometry.columns());
+                let rects_stable =
+                    Self::selection_rects(&selection_range, terminal_geometry.columns());
                 let cell_size = terminal_geometry.cell_size_px.map(f64::from);
-                let location_stable_index = selection.stable_rows().start;
+                let location_stable_index = selection_range.stable_rows().start;
 
                 let (location, top_px) = self
                     .locations
@@ -682,11 +684,12 @@ impl TerminalView {
                 //
                 match &mut self.selection {
                     Some(selection) => {
+                        selection.row_range = selection_range.stable_rows();
                         selection.visual.update_if_changed(visual);
                     }
                     None => {
                         self.selection = Some(SelectionVisual {
-                            row_range: selection.stable_rows(),
+                            row_range: selection_range.stable_rows(),
                             visual: scene.stage(visual),
                         })
                     }

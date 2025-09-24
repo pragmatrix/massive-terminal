@@ -4,6 +4,7 @@ use anyhow::Result;
 use derive_more::Debug;
 use log::{debug, info};
 
+use massive_animation::TimeScale;
 use parking_lot::Mutex;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{Line, StableRowIndex, Terminal};
@@ -11,7 +12,9 @@ use wezterm_term::{Line, StableRowIndex, Terminal};
 use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
-    terminal::{Selection, SelectionPos, TerminalGeometry},
+    terminal::{
+        NormalizedSelectionRange, Selection, SelectionPos, SelectionRange, TerminalGeometry,
+    },
     window_geometry::PixelPoint,
 };
 use massive_input::Progress;
@@ -26,13 +29,16 @@ pub struct TerminalPresenter {
     #[debug(skip)]
     pub terminal: Arc<Mutex<Terminal>>,
 
+    scroll_state: ScrollState,
+    selection: Selection,
+
     #[debug(skip)]
     #[allow(clippy::type_complexity)]
     view_gen: Box<dyn Fn(&Scene, StableRowIndex) -> TerminalView + Send>,
 
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
-    selection: Selection,
+
     view: TerminalView,
     alt_screen_active: bool,
 }
@@ -49,11 +55,14 @@ impl TerminalPresenter {
         Self {
             geometry,
             terminal: Mutex::new(terminal).into(),
+
+            scroll_state: Default::default(),
+            selection: Default::default(),
+
             view_gen: Box::new(view_gen),
             last_rendered_seq_no,
             temporary_line_buf: Vec::new(),
 
-            selection: Default::default(),
             view,
             alt_screen_active: false,
         }
@@ -61,6 +70,10 @@ impl TerminalPresenter {
 
     pub fn geometry(&self) -> &TerminalGeometry {
         &self.geometry
+    }
+
+    pub fn enable_autoscroll(&mut self) {
+        self.scroll_state = ScrollState::Auto;
     }
 
     // Returns `true` if the terminal size in cells changed.
@@ -81,24 +94,26 @@ impl TerminalPresenter {
 
     /// Update the view lines, cursor, and selection.
     pub fn update(&mut self, window_state: &WindowState, scene: &Scene) -> Result<()> {
-        let view = &mut self.view;
-
         // Currently we need always apply view animations, otherwise the scroll matrix is not
         // in sync with the updated lines which results in flickering while scrolling (i.e.
         // lines disappearing too early when scrolling up).
         //
         // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
         // concept.
-        view.apply_animations();
+        self.view.apply_animations();
 
-        let selection_range = self.selection.range().map(|range| range.stable_rows());
+        let selection_range = self.selection_range();
+
         let mut changes_intersect_with_selection = false;
 
         let terminal = self.terminal.lock();
         let screen = terminal.screen();
-        let columns = screen.physical_cols;
+        let view = &mut self.view;
 
         // Switch between primary and alt screen.
+        //
+        // Architecture: If we do switch here, we overwrite all scrolling / apply animations done
+        // above, this seems broken.
         {
             let alt_screen_active = terminal.is_alt_screen_active();
             if alt_screen_active != self.alt_screen_active {
@@ -136,14 +151,27 @@ impl TerminalPresenter {
             .visible_row_to_stable_row(0)
             .with_len(screen.physical_rows);
 
+        // We need to scroll first, so that the visible range is up to date (even though this should
+        // not make a difference when the view is currently animating, because animations are not
+        // instantly applied).
+        match &mut self.scroll_state {
+            ScrollState::Auto => {
+                view.scroll_to_stable(terminal_visible_stable_range.start);
+            }
+            ScrollState::Resting(stable_row) => {
+                view.scroll_to_stable(*stable_row);
+            }
+            ScrollState::SelectionScroll(scroller) => {
+                let current = view.animating_scroll_offset_px();
+                let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
+                view.scroll_to_px(current + scaled_velocity);
+            }
+        }
+
         // The range the terminal has line data for.
         let terminal_full_stable_range = screen.phys_to_stable_row_index(0).with_len(
             screen.scrollback_rows(), /* does include the visible part */
         );
-
-        // We need to scroll first, so that the visible range is up to date (even though this
-        // should not make a difference when the view is currently animating).
-        view.scroll_to_stable(terminal_visible_stable_range.start);
 
         // Get the range of lines the view is showing currently.
         let view_stable_range = view.geometry(&self.geometry).stable_range;
@@ -183,11 +211,11 @@ impl TerminalPresenter {
         if terminal_updated && let Some(terminal_range) = terminal_view_lines {
             let changed = screen.get_changed_stable_rows(terminal_range, self.last_rendered_seq_no);
 
+            let selection_rows = selection_range.map(|s| s.stable_rows()).unwrap_or_default();
+
             changed.into_iter().for_each(|l| {
                 debug_assert!(view_stable_range.contains(&l));
-                if let Some(selection_range) = &selection_range
-                    && selection_range.contains(&l)
-                {
+                if selection_rows.contains(&l) {
                     changes_intersect_with_selection = true;
                 }
                 lines_requested.add(l)
@@ -224,6 +252,8 @@ impl TerminalPresenter {
         }
 
         let cursor_pos = terminal.cursor_pos();
+        let cursor_stable_y = terminal_visible_stable_range.start + cursor_pos.y as StableRowIndex;
+        let columns = screen.physical_cols;
 
         // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
         // changes can be pushed to it as fast as possible.
@@ -261,7 +291,7 @@ impl TerminalPresenter {
 
         // Update cursor and selection
 
-        view_update.cursor(cursor_pos, window_state.focused);
+        view_update.cursor(cursor_pos, cursor_stable_y, window_state.focused);
 
         {
             // Clear the selection if changes intersect it and the user does not interact with it.
@@ -269,8 +299,7 @@ impl TerminalPresenter {
                 self.selection.reset();
             }
             view_update.selection(
-                self.selection
-                    .range()
+                selection_range
                     // The clamping is needed, otherwise we could keep too many matrix locations.
                     // Architecture: The clamping should happen in the view (there where the problem arises)
                     .and_then(|range| range.clamp_to_rows(terminal_full_stable_range, columns)),
@@ -284,11 +313,11 @@ impl TerminalPresenter {
 
         Ok(())
     }
+}
 
-    pub fn selection(&self) -> &Selection {
-        &self.selection
-    }
+// Selection
 
+impl TerminalPresenter {
     pub fn selection_begin(&mut self, hit: PixelPoint) {
         self.selection
             .begin(self.pixel_coords_to_selection_pos(hit));
@@ -298,14 +327,47 @@ impl TerminalPresenter {
         self.selection.can_progress()
     }
 
-    pub fn selection_progress(&mut self, progress: Progress<PixelPoint>) {
+    const PIXEL_TO_SCROLL_VELOCITY_PER_SECOND: f64 = 16.0;
+
+    pub fn selection_progress(&mut self, scene: &Scene, progress: Progress<PixelPoint>) {
         match progress {
-            Progress::Proceed(cell_hit) => {
-                self.selection
-                    .progress(self.pixel_coords_to_selection_pos(cell_hit));
+            Progress::Proceed(view_hit) => {
+                // Scroll?
+                let pixel_velocity = self.geometry().scroll_distance_px(view_hit);
+                if let Some(velocity) = pixel_velocity {
+                    self.scroll_selection(
+                        scene,
+                        velocity * Self::PIXEL_TO_SCROLL_VELOCITY_PER_SECOND,
+                    )
+                } else {
+                    self.clear_selection_scroller()
+                }
+
+                self.selection.progress(view_hit);
             }
-            Progress::Commit => self.selection.end(),
-            Progress::Cancel => self.selection.reset(),
+            Progress::Commit => {
+                self.clear_selection_scroller();
+                if let Some(end) = self.selection.selecting_end() {
+                    let pos = self.pixel_coords_to_selection_pos(end);
+                    self.selection.end(pos)
+                }
+            }
+            Progress::Cancel => {
+                self.clear_selection_scroller();
+                self.selection.reset()
+            }
+        }
+    }
+
+    pub fn selection_range(&self) -> Option<NormalizedSelectionRange> {
+        match self.selection {
+            Selection::Unselected => None,
+            Selection::Begun { .. } => None,
+            Selection::Selecting { from, to } => {
+                let to = self.pixel_coords_to_selection_pos(to);
+                Some(SelectionRange::new(from, to).normalized())
+            }
+            Selection::Selected { from, to } => Some(SelectionRange::new(from, to).normalized()),
         }
     }
 
@@ -315,4 +377,41 @@ impl TerminalPresenter {
 
         SelectionPos::new(column.max(0) as usize, stable_row)
     }
+
+    // Selection Scrolling
+
+    fn scroll_selection(&mut self, scene: &Scene, velocity: f64) {
+        match &mut self.scroll_state {
+            ScrollState::SelectionScroll(scroller) => scroller.velocity = velocity,
+            state => {
+                *state = ScrollState::SelectionScroll(SelectionScroller {
+                    velocity,
+                    time_scale: scene.time_scale(),
+                })
+            }
+        }
+    }
+
+    fn clear_selection_scroller(&mut self) {
+        // Precision: Should probably rest on the nearest stable line, not the topmost visible?
+        let current_stable_top = self.view.geometry(&self.geometry).stable_range.start.max(0);
+        self.scroll_state = ScrollState::Resting(current_stable_top);
+    }
+}
+
+#[derive(Debug, Default)]
+enum ScrollState {
+    /// Automatically scroll to the cursor position / last line.
+    #[default]
+    Auto,
+    /// We are at a stable resting position.
+    Resting(StableRowIndex),
+    /// The selection is currently controlling the scrolling with a particular velocity.
+    SelectionScroll(SelectionScroller),
+}
+
+#[derive(Debug)]
+struct SelectionScroller {
+    velocity: f64,
+    time_scale: TimeScale,
 }

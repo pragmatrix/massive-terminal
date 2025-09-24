@@ -18,7 +18,7 @@ pub struct ScrollLocations {
     parent: Handle<Location>,
     line_height_px: u32,
     /// The current scroll offset in pixels.
-    scroll_offset_px: u64,
+    scroll_offset_px: i64,
     // Performance: Use a simple vec here.
     locations: HashMap<BucketKey, ScrollLocation>,
 }
@@ -37,7 +37,7 @@ struct ScrollLocation {
 }
 
 impl ScrollLocations {
-    pub fn new(parent: Handle<Location>, line_height_px: u32, scroll_offset_px: u64) -> Self {
+    pub fn new(parent: Handle<Location>, line_height_px: u32, scroll_offset_px: i64) -> Self {
         Self {
             parent,
             line_height_px,
@@ -66,7 +66,7 @@ impl ScrollLocations {
         let location = match self.locations.entry(bucket_key) {
             Entry::Occupied(occupied) => occupied.into_mut().location.clone(),
             Entry::Vacant(vacant) => {
-                let matrix_scroll_offset_px = bucket_top_px - self.scroll_offset_px as i64;
+                let matrix_scroll_offset_px = bucket_top_px - self.scroll_offset_px;
                 let matrix = scene.stage(Matrix::from_translation(
                     (0., matrix_scroll_offset_px as f64, 0.).into(),
                 ));
@@ -84,11 +84,11 @@ impl ScrollLocations {
     }
 
     /// Scroll the _current_ scroll offset of all matrices to the pixel location.
-    pub fn set_scroll_offset_px(&mut self, scroll_offset_px: u64) {
+    pub fn set_scroll_offset_px(&mut self, scroll_offset_px: i64) {
         let line_height = self.line_height_px;
         self.locations.iter_mut().for_each(|(index, location)| {
             let base_offset = Self::bucket_base_scroll_offset(*index, line_height);
-            let new_scroll_offset = base_offset as i64 - scroll_offset_px as i64;
+            let new_scroll_offset = base_offset - scroll_offset_px;
             if new_scroll_offset != location.matrix_scroll_offset_px {
                 location.matrix_scroll_offset_px = new_scroll_offset;
                 location
@@ -125,9 +125,9 @@ impl ScrollLocations {
     /// The bucket's base scroll offset.
     ///
     /// This added to the scroll offset in `ScrollLocation` makes up the final scroll offset.
-    fn bucket_base_scroll_offset(index: BucketKey, line_height: u32) -> u64 {
+    fn bucket_base_scroll_offset(index: BucketKey, line_height: u32) -> i64 {
         let top = Self::bucket_stable_range(index).start;
-        top as u64 * line_height as u64
+        top as i64 * line_height as i64
     }
 
     fn bucket_key(stable_index: StableRowIndex) -> BucketKey {
