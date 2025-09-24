@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
 use winit::{
     dpi::PhysicalSize,
-    event::{ElementState, MouseButton, WindowEvent},
+    event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
     window::WindowId,
 };
 
@@ -349,6 +349,20 @@ impl MassiveTerminal {
                 // Architecture: Should we track the focused state of the window in the EventAggregator?
                 self.window_state.focused = *focused;
                 self.terminal().lock().focus_changed(*focused);
+            }
+            WindowEvent::MouseWheel {
+                device_id: _,
+                delta,
+                phase: TouchPhase::Moved,
+            } => {
+                let delta_px = match delta {
+                    MouseScrollDelta::LineDelta(_, delta) => {
+                        (*delta as f64) * self.presenter.geometry().line_height_px() as f64
+                    }
+                    MouseScrollDelta::PixelDelta(physical_position) => physical_position.y,
+                };
+
+                self.presenter.scroll_delta_px(-delta_px)
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let Some((key, modifiers)) = input::termwiz::convert_key_event(event, modifiers)

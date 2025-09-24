@@ -148,12 +148,16 @@ impl TerminalView {
         );
     }
 
-    fn animating_scroll_offset_px_snapped(&self) -> i64 {
+    pub fn final_scroll_offset_px(&self) -> f64 {
+        self.scroll_offset_px.final_value()
+    }
+
+    fn current_scroll_offset_px_snapped(&self) -> i64 {
         self.scroll_offset_px.value().round() as i64
     }
 
     /// Returns the current fractional scroll offset in pixel.
-    pub fn animating_scroll_offset_px(&self) -> f64 {
+    pub fn current_scroll_offset_px(&self) -> f64 {
         self.scroll_offset_px.value()
     }
 
@@ -176,7 +180,7 @@ impl TerminalView {
         // update the latest value yet.
 
         // Snap to the nearest pixel, otherwise animated frames would not be pixel perfect.
-        let scroll_offset_px = self.animating_scroll_offset_px_snapped();
+        let scroll_offset_px = self.current_scroll_offset_px_snapped();
         self.locations.set_scroll_offset_px(scroll_offset_px);
     }
 
@@ -193,7 +197,7 @@ impl TerminalView {
         // First pixel visible inside the screen viewed.
         let line_height_px = self.font.cell_size_px().1 as i64;
 
-        let topmost_pixel_line_visible = self.animating_scroll_offset_px_snapped();
+        let topmost_pixel_line_visible = self.current_scroll_offset_px_snapped();
         let topmost_stable_render_line = topmost_pixel_line_visible.div_euclid(line_height_px);
         let topmost_stable_render_line_ascend =
             topmost_pixel_line_visible.rem_euclid(line_height_px);
