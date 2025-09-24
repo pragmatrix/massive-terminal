@@ -4,7 +4,10 @@ use derive_more::Deref;
 use log::error;
 use wezterm_term::StableRowIndex;
 
-use crate::{range_ops::RangeOps, window_geometry::CellPoint};
+use crate::{
+    range_ops::RangeOps,
+    window_geometry::{CellPoint, PixelPoint},
+};
 
 #[derive(Debug, Default)]
 pub enum Selection {
@@ -13,8 +16,16 @@ pub enum Selection {
     Begun {
         pos: SelectionPos,
     },
-    Selecting(SelectionRange),
-    Selected(NormalizedSelectionRange),
+    // We store the ending position as pixel point, because the selection might change when the view
+    // is scrolled, but the starting point always needs to point on the cell originally selected.
+    Selecting {
+        from: SelectionPos,
+        to: PixelPoint,
+    },
+    Selected {
+        from: SelectionPos,
+        to: SelectionPos,
+    },
 }
 
 impl Selection {
@@ -26,12 +37,16 @@ impl Selection {
         matches!(self, Self::Begun { .. } | Self::Selecting { .. })
     }
 
-    pub fn progress(&mut self, ending_pos: SelectionPos) {
+    pub fn progress(&mut self, end: PixelPoint) {
         *self = match &self {
-            Self::Begun { pos } => Self::Selecting(SelectionRange::new(*pos, ending_pos)),
-            Self::Selecting(SelectionRange { start, .. }) => {
-                Self::Selecting(SelectionRange::new(*start, ending_pos))
-            }
+            Self::Begun { pos } => Self::Selecting {
+                from: *pos,
+                to: end,
+            },
+            Self::Selecting { from: start, .. } => Self::Selecting {
+                from: *start,
+                to: end,
+            },
             _ => {
                 error!(
                     "Internal error: Selection is progressing, but state is {:?}",
@@ -42,10 +57,19 @@ impl Selection {
         };
     }
 
-    pub fn end(&mut self) {
+    /// Ends the selection and returns the pixel point the cursor was last at.
+    #[must_use]
+    pub fn selecting_end(&self) -> Option<PixelPoint> {
+        match self {
+            Self::Selecting { to, .. } => Some(*to),
+            _ => None,
+        }
+    }
+
+    pub fn end(&mut self, to: SelectionPos) {
         *self = match &self {
             Self::Begun { .. } => Self::Unselected,
-            Self::Selecting(range) => Self::Selected(range.normalized()),
+            Self::Selecting { from, .. } => Self::Selected { from: *from, to },
             _ => {
                 error!(
                     "Internal error: Selection is ending, but state is {:?}",
@@ -58,15 +82,6 @@ impl Selection {
 
     pub fn reset(&mut self) {
         *self = Self::Unselected;
-    }
-
-    // Normalized selection range
-    pub fn range(&self) -> Option<NormalizedSelectionRange> {
-        match self {
-            Self::Selecting(range) => Some(range.normalized()),
-            Self::Selected(range) => Some(*range),
-            _ => None,
-        }
     }
 }
 

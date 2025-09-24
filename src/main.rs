@@ -430,7 +430,7 @@ impl MassiveTerminal {
         let mut s = String::new();
         // Feature: Rectangular selection.
         let rectangular = false;
-        let Some(sel) = self.presenter.selection().range() else {
+        let Some(sel) = self.presenter.selection_range() else {
             return s;
         };
         let mut last_was_wrapped = false;

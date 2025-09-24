@@ -12,7 +12,9 @@ use wezterm_term::{Line, StableRowIndex, Terminal};
 use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
-    terminal::{Selection, SelectionPos, TerminalGeometry},
+    terminal::{
+        NormalizedSelectionRange, Selection, SelectionPos, SelectionRange, TerminalGeometry,
+    },
     window_geometry::PixelPoint,
 };
 use massive_input::Progress;
@@ -95,8 +97,6 @@ impl TerminalPresenter {
 
     /// Update the view lines, cursor, and selection.
     pub fn update(&mut self, window_state: &WindowState, scene: &Scene) -> Result<()> {
-        let view = &mut self.view;
-
         // First see if the selection wants to scroll the view.
         // Architecture: This does not seem to belong here.
         if let Some(scroller) = &mut self.selection_scroller {
@@ -104,9 +104,9 @@ impl TerminalPresenter {
             // Detail: We always scroll from the current scroll offset. This conflicts with the
             // terminal's detected scrolling later, but will also guarantee, that a stable position
             // is always reached..
-            let current = view.animating_scroll_offset_px();
+            let current = self.view.animating_scroll_offset_px();
             let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
-            view.scroll_to_px(current + scaled_velocity);
+            self.view.scroll_to_px(current + scaled_velocity);
         }
 
         // Currently we need always apply view animations, otherwise the scroll matrix is not
@@ -115,14 +115,16 @@ impl TerminalPresenter {
         //
         // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
         // concept.
-        view.apply_animations();
+        self.view.apply_animations();
 
-        let selection_range = self.selection.range().map(|range| range.stable_rows());
+        let selection_range = self.selection_range();
+
         let mut changes_intersect_with_selection = false;
 
         let terminal = self.terminal.lock();
         let screen = terminal.screen();
         let columns = screen.physical_cols;
+        let view = &mut self.view;
 
         // Switch between primary and alt screen.
         //
@@ -215,11 +217,11 @@ impl TerminalPresenter {
         if terminal_updated && let Some(terminal_range) = terminal_view_lines {
             let changed = screen.get_changed_stable_rows(terminal_range, self.last_rendered_seq_no);
 
+            let selection_rows = selection_range.map(|s| s.stable_rows()).unwrap_or_default();
+
             changed.into_iter().for_each(|l| {
                 debug_assert!(view_stable_range.contains(&l));
-                if let Some(selection_range) = &selection_range
-                    && selection_range.contains(&l)
-                {
+                if selection_rows.contains(&l) {
                     changes_intersect_with_selection = true;
                 }
                 lines_requested.add(l)
@@ -302,8 +304,7 @@ impl TerminalPresenter {
                 self.selection.reset();
             }
             view_update.selection(
-                self.selection
-                    .range()
+                selection_range
                     // The clamping is needed, otherwise we could keep too many matrix locations.
                     // Architecture: The clamping should happen in the view (there where the problem arises)
                     .and_then(|range| range.clamp_to_rows(terminal_full_stable_range, columns)),
@@ -317,11 +318,11 @@ impl TerminalPresenter {
 
         Ok(())
     }
+}
 
-    pub fn selection(&self) -> &Selection {
-        &self.selection
-    }
+// Selection
 
+impl TerminalPresenter {
     pub fn selection_begin(&mut self, hit: PixelPoint) {
         self.selection
             .begin(self.pixel_coords_to_selection_pos(hit));
@@ -349,17 +350,31 @@ impl TerminalPresenter {
                     }
                 }
 
-                self.selection
-                    .progress(self.pixel_coords_to_selection_pos(view_hit));
+                self.selection.progress(view_hit);
             }
             Progress::Commit => {
                 self.clear_selection_scroller();
-                self.selection.end()
+                if let Some(end) = self.selection.selecting_end() {
+                    let pos = self.pixel_coords_to_selection_pos(end);
+                    self.selection.end(pos)
+                }
             }
             Progress::Cancel => {
                 self.clear_selection_scroller();
                 self.selection.reset()
             }
+        }
+    }
+
+    pub fn selection_range(&self) -> Option<NormalizedSelectionRange> {
+        match self.selection {
+            Selection::Unselected => None,
+            Selection::Begun { .. } => None,
+            Selection::Selecting { from, to } => {
+                let to = self.pixel_coords_to_selection_pos(to);
+                Some(SelectionRange::new(from, to).normalized())
+            }
+            Selection::Selected { from, to } => Some(SelectionRange::new(from, to).normalized()),
         }
     }
 
