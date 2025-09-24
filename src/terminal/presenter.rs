@@ -92,6 +92,11 @@ impl TerminalPresenter {
         Ok(true)
     }
 
+    pub fn scroll_delta_px(&mut self, delta: f64) {
+        let current = self.view.final_scroll_offset_px();
+        self.scroll_state = ScrollState::RestingPixel(current + delta);
+    }
+
     /// Update the view lines, cursor, and selection.
     pub fn update(&mut self, window_state: &WindowState, scene: &Scene) -> Result<()> {
         // Currently we need always apply view animations, otherwise the scroll matrix is not
@@ -158,11 +163,14 @@ impl TerminalPresenter {
             ScrollState::Auto => {
                 view.scroll_to_stable(terminal_visible_stable_range.start);
             }
-            ScrollState::Resting(stable_row) => {
+            ScrollState::RestingRow(stable_row) => {
                 view.scroll_to_stable(*stable_row);
             }
+            ScrollState::RestingPixel(pixel) => {
+                view.scroll_to_px(*pixel);
+            }
             ScrollState::SelectionScroll(scroller) => {
-                let current = view.animating_scroll_offset_px();
+                let current = view.current_scroll_offset_px();
                 let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
                 view.scroll_to_px(current + scaled_velocity);
             }
@@ -395,7 +403,7 @@ impl TerminalPresenter {
     fn clear_selection_scroller(&mut self) {
         // Precision: Should probably rest on the nearest stable line, not the topmost visible?
         let current_stable_top = self.view.geometry(&self.geometry).stable_range.start.max(0);
-        self.scroll_state = ScrollState::Resting(current_stable_top);
+        self.scroll_state = ScrollState::RestingRow(current_stable_top);
     }
 }
 
@@ -405,7 +413,9 @@ enum ScrollState {
     #[default]
     Auto,
     /// We are at a stable resting position.
-    Resting(StableRowIndex),
+    RestingRow(StableRowIndex),
+    /// We are at a stable resting pixel position. This is used for mouse wheel scrolling.
+    RestingPixel(f64),
     /// The selection is currently controlling the scrolling with a particular velocity.
     SelectionScroll(SelectionScroller),
 }
