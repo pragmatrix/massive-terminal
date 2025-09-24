@@ -62,7 +62,7 @@ pub struct TerminalView {
     /// May be negative while animating.
     scroll_offset_px: Animated<f64>,
 
-    /// The first line's stable index in  visible lines.
+    /// The first line's stable index in visible lines.
     first_line_stable_index: StableRowIndex,
 
     /// The visible lines. This contains _only_ the lines currently visible in the terminal.
