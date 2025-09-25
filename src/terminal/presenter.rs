@@ -401,9 +401,11 @@ impl TerminalPresenter {
     }
 
     fn clear_selection_scroller(&mut self) {
-        // Precision: Should probably rest on the nearest stable line, not the topmost visible?
-        let current_stable_top = self.view.geometry(&self.geometry).stable_range.start.max(0);
-        self.scroll_state = ScrollState::RestingRow(current_stable_top);
+        if matches!(self.scroll_state, ScrollState::SelectionScroll(..)) {
+            // Precision: Should probably rest on the nearest stable line, not the topmost visible?
+            let current_stable_top = self.view.geometry(&self.geometry).stable_range.start.max(0);
+            self.scroll_state = ScrollState::RestingRow(current_stable_top);
+        }
     }
 }
 
