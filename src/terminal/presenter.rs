@@ -409,10 +409,21 @@ impl TerminalPresenter {
     }
 
     fn clear_selection_scroller(&mut self) {
-        if matches!(self.scroll_state, ScrollState::SelectionScroll(..)) {
-            // Precision: Should probably rest on the nearest stable line, not the topmost visible?
-            let current_stable_top = self.view.geometry(&self.geometry).stable_range.start.max(0);
-            self.scroll_state = ScrollState::RestingRow(current_stable_top);
+        if let ScrollState::SelectionScroll(SelectionScroller { velocity, .. }) = self.scroll_state
+        {
+            // Ergonomics: This scroll direction movement detection does only matter when velocity
+            // is slow, otherwise it seems that the velocity animation gets redirected anyways even if
+            // `view.apply_animations()` is called.
+            let prefer_to_scroll_up = velocity < 0.;
+
+            let geometry = self.view.geometry(&self.geometry);
+
+            let resting_row = if geometry.stable_range_ascend_px == 0 || prefer_to_scroll_up {
+                geometry.stable_range.start.max(0)
+            } else {
+                (geometry.stable_range.start + 1).max(0)
+            };
+            self.scroll_state = ScrollState::RestingRow(resting_row);
         }
     }
 }
