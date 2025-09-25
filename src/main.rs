@@ -22,7 +22,7 @@ use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConfiguration, color};
 
 use massive_geometry::{Camera, Color, Identity};
-use massive_input::{EventManager, ExternalEvent, Movement};
+use massive_input::{EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_scene::{Handle, Location, Matrix};
 use massive_shell::{
     ApplicationContext, AsyncWindowRenderer, Scene, ShellEvent, ShellWindow, shell,
@@ -317,14 +317,19 @@ impl MassiveTerminal {
         };
 
         match &mut self.selecting {
-            None => {
-                if let Some(movement) = ev.detect_movement(MouseButton::Left, min_movement_distance)
-                    && let Some(hit) = hit_view_matrix(movement.from)
-                {
-                    self.presenter.selection_begin(hit);
-                    self.selecting = Some(movement);
+            None => match ev.detect_mouse_gesture(MouseButton::Left, min_movement_distance) {
+                // WezTerm reacts on Click, macOS term on Clicked.
+                Some(MouseGesture::Clicked(..)) => {
+                    self.presenter.selection_clear();
                 }
-            }
+                Some(MouseGesture::Movement(movement)) => {
+                    if let Some(hit) = hit_view_matrix(movement.from) {
+                        self.presenter.selection_begin(hit);
+                        self.selecting = Some(movement);
+                    }
+                }
+                _ => {}
+            },
             Some(movement) => {
                 if let Some(progress) = movement.track_to(&ev) {
                     let progress = progress.map_or_cancel(hit_view_matrix);

@@ -327,8 +327,14 @@ impl TerminalPresenter {
 
 impl TerminalPresenter {
     pub fn selection_begin(&mut self, hit: PixelPoint) {
+        self.selection_clear();
         self.selection
             .begin(self.pixel_coords_to_selection_pos(hit));
+    }
+
+    pub fn selection_clear(&mut self) {
+        self.clear_selection_scroller();
+        self.selection.reset();
     }
 
     pub fn selection_can_progress(&self) -> bool {
@@ -385,9 +391,11 @@ impl TerminalPresenter {
 
         SelectionPos::new(column.max(0) as usize, stable_row)
     }
+}
 
-    // Selection Scrolling
+// Selection Scrolling
 
+impl TerminalPresenter {
     fn scroll_selection(&mut self, scene: &Scene, velocity: f64) {
         match &mut self.scroll_state {
             ScrollState::SelectionScroll(scroller) => scroller.velocity = velocity,
