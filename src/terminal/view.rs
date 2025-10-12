@@ -186,10 +186,11 @@ impl TerminalView {
 
     /// Return the current geometry of the view.
     ///
-    /// This returns the stable range of all the lines we need to update taking the current scrolling
-    /// animation into account.
+    /// This returns the stable range of all the lines we need to update taking the current
+    /// scrolling animation into account.
     ///
-    /// This also means that the returned range might be out of range wrt the actual terminal lines.
+    /// This also means that the returned range might be out of range with respect to the actual
+    /// terminal lines.
     pub fn geometry(&self, terminal_geometry: &TerminalGeometry) -> ViewGeometry {
         let rows = terminal_geometry.rows();
         assert!(rows >= 1);

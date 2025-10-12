@@ -25,7 +25,7 @@ use massive_shell::Scene;
 #[derive(Debug)]
 pub struct TerminalPresenter {
     geometry: TerminalGeometry,
-    // Architecture: The presenter should probably act as a facade to the underlying terminal.
+    // Architecture: The presenter should probably act as a facade to the underlying terminal and not use a `Arc<Mutex<>>` here.
     #[debug(skip)]
     pub terminal: Arc<Mutex<Terminal>>,
 
@@ -158,7 +158,7 @@ impl TerminalPresenter {
 
         // We need to scroll first, so that the visible range is up to date (even though this should
         // not make a difference when the view is currently animating, because animations are not
-        // instantly applied).
+        // applied instantly).
         match &mut self.scroll_state {
             ScrollState::Auto => {
                 view.scroll_to_stable(terminal_visible_stable_range.start);
@@ -170,9 +170,9 @@ impl TerminalPresenter {
                 view.scroll_to_px(*pixel);
             }
             ScrollState::SelectionScroll(scroller) => {
-                let current = view.current_scroll_offset_px();
+                let current_px_offset = view.current_scroll_offset_px();
                 let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
-                view.scroll_to_px(current + scaled_velocity);
+                view.scroll_to_px(current_px_offset + scaled_velocity);
             }
         }
 
