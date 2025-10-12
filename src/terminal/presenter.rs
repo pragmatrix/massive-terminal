@@ -37,7 +37,6 @@ pub struct TerminalPresenter {
     temporary_line_buf: Vec<Line>,
 
     view: TerminalView,
-    alt_screen_active: bool,
 }
 
 impl TerminalPresenter {
@@ -48,7 +47,7 @@ impl TerminalPresenter {
         last_rendered_seq_no: SequenceNo,
         scene: &Scene,
     ) -> Self {
-        let view = TerminalView::new(view_params.clone(), scene, 0);
+        let view = TerminalView::new(view_params.clone(), false, scene, 0);
         Self {
             geometry,
             terminal: Mutex::new(terminal).into(),
@@ -60,7 +59,6 @@ impl TerminalPresenter {
             temporary_line_buf: Vec::new(),
 
             view,
-            alt_screen_active: false,
         }
     }
 
@@ -118,7 +116,7 @@ impl TerminalPresenter {
         // And what if scrolling later interferes with a switch?
         {
             let alt_screen_active = terminal.is_alt_screen_active();
-            if alt_screen_active != self.alt_screen_active {
+            if alt_screen_active != view.alt_screen {
                 // Switch
                 let scroll_offset = screen.visible_row_to_stable_row(0);
                 info!(
@@ -130,8 +128,7 @@ impl TerminalPresenter {
                     }
                 );
                 let params = view.params.clone();
-                *view = TerminalView::new(params, scene, scroll_offset);
-                self.alt_screen_active = alt_screen_active;
+                *view = TerminalView::new(params, alt_screen_active, scene, scroll_offset);
             }
         }
 

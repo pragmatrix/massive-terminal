@@ -56,6 +56,11 @@ pub struct TerminalViewParams {
 #[derive(Debug)]
 pub struct TerminalView {
     pub params: TerminalViewParams,
+    /// Is this view showing the alt screen?
+    ///
+    /// This is kind of a meta property just so that presenter knows and does not really belong
+    /// here, but makes switching simpler.
+    pub alt_screen: bool,
     color_palette: ColorPalette,
 
     locations: ScrollLocations,
@@ -102,7 +107,12 @@ impl TerminalView {
     /// Scene is needed to pre-create all the rows. This in turn prevents us from caring too much
     /// lazily creating them later, but may put a little more pressure on the renderer to filter out
     /// unused visuals.
-    pub fn new(params: TerminalViewParams, scene: &Scene, scroll_offset: StableRowIndex) -> Self {
+    pub fn new(
+        params: TerminalViewParams,
+        alt_screen: bool,
+        scene: &Scene,
+        scroll_offset: StableRowIndex,
+    ) -> Self {
         let line_height = params.font.cell_size_px().1;
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * line_height as u64;
@@ -114,6 +124,7 @@ impl TerminalView {
 
         Self {
             params,
+            alt_screen,
             color_palette: ColorPalette::default(),
             locations,
             scroll_offset_px: scene.animated(scroll_offset_px as f64),
