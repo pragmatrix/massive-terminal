@@ -100,8 +100,6 @@ impl TerminalPresenter {
         // concept.
         self.view.apply_animations();
 
-        let mut changes_intersect_with_selection = false;
-
         let terminal = self.terminal.lock();
         Self::sync_alt_screen(&terminal, &mut self.view, scene);
 
@@ -193,17 +191,15 @@ impl TerminalPresenter {
         //
         // Detail: Need to pass a valid terminal range, passing a larger range would return
         // lines outside of the requested range because of internal alignment rules.
+
+        let mut changed_lines = Vec::new();
         if terminal_updated && let Some(terminal_range) = terminal_view_lines {
-            let changed = screen.get_changed_stable_rows(terminal_range, self.last_rendered_seq_no);
+            changed_lines =
+                screen.get_changed_stable_rows(terminal_range, self.last_rendered_seq_no);
 
-            let selection_rows = selection_range.map(|s| s.stable_rows()).unwrap_or_default();
-
-            changed.into_iter().for_each(|l| {
-                debug_assert!(view_stable_range.contains(&l));
-                if selection_rows.contains(&l) {
-                    changes_intersect_with_selection = true;
-                }
-                lines_requested.add(l)
+            changed_lines.iter().for_each(|l| {
+                debug_assert!(view_stable_range.contains(l));
+                lines_requested.add(*l)
             })
         }
 
@@ -274,11 +270,16 @@ impl TerminalPresenter {
             self.temporary_line_buf.clear();
         }
 
-        // Update cursor and selection
+        // Update cursor
 
         view_update.cursor(cursor_pos, cursor_stable_y, window_state.focused);
 
+        // Update selection
         {
+            let selection_rows = selection_range.map(|s| s.stable_rows()).unwrap_or_default();
+            let changes_intersect_with_selection =
+                changed_lines.iter().any(|l| selection_rows.contains(l));
+
             // Clear the selection if changes intersect it and the user does not interact with it.
             if changes_intersect_with_selection && !self.selection.can_progress() {
                 self.selection.reset();
