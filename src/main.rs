@@ -168,14 +168,10 @@ impl MassiveTerminal {
             matrix: view_matrix.clone(),
         });
 
-        let view_gen = move |scene: &Scene, scroll_offset| {
-            TerminalView::new(
-                font_system.clone(),
-                terminal_font.clone(),
-                scroll_offset,
-                view_location.clone(),
-                scene,
-            )
+        let view_params = TerminalViewParams {
+            font_system: font_system.clone(),
+            font: terminal_font.clone(),
+            parent_location: view_location.clone(),
         };
 
         let terminal_scroller =
@@ -184,7 +180,7 @@ impl MassiveTerminal {
         let presenter = TerminalPresenter::new(
             terminal_geometry,
             terminal,
-            view_gen,
+            view_params,
             last_rendered_seq_no,
             &scene,
         );

@@ -14,6 +14,7 @@ use crate::{
     range_ops::{RangeOps, WithLength},
     terminal::{
         NormalizedSelectionRange, Selection, SelectionPos, SelectionRange, TerminalGeometry,
+        TerminalViewParams,
     },
     window_geometry::PixelPoint,
 };
@@ -32,10 +33,8 @@ pub struct TerminalPresenter {
     scroll_state: ScrollState,
     selection: Selection,
 
-    #[debug(skip)]
-    #[allow(clippy::type_complexity)]
-    view_gen: Box<dyn Fn(&Scene, StableRowIndex) -> TerminalView + Send>,
-
+    // ... to regenerate views when we change to the alt screen or back.
+    view_params: TerminalViewParams,
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
 
@@ -47,11 +46,11 @@ impl TerminalPresenter {
     pub fn new(
         geometry: TerminalGeometry,
         terminal: Terminal,
-        view_gen: impl Fn(&Scene, StableRowIndex) -> TerminalView + Send + 'static,
+        view_params: TerminalViewParams,
         last_rendered_seq_no: SequenceNo,
         scene: &Scene,
     ) -> Self {
-        let view = view_gen(scene, 0);
+        let view = TerminalView::new(view_params.clone(), scene, 0);
         Self {
             geometry,
             terminal: Mutex::new(terminal).into(),
@@ -59,7 +58,7 @@ impl TerminalPresenter {
             scroll_state: Default::default(),
             selection: Default::default(),
 
-            view_gen: Box::new(view_gen),
+            view_params,
             last_rendered_seq_no,
             temporary_line_buf: Vec::new(),
 
@@ -132,7 +131,7 @@ impl TerminalPresenter {
                         "primary"
                     }
                 );
-                *view = (self.view_gen)(scene, scroll_offset);
+                *view = TerminalView::new(self.view_params.clone(), scene, scroll_offset);
                 self.alt_screen_active = alt_screen_active;
             }
         }

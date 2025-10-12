@@ -37,6 +37,13 @@ use massive_shell::Scene;
 
 const SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(100);
 
+#[derive(Debug, Clone)]
+pub struct TerminalViewParams {
+    pub font_system: Arc<Mutex<FontSystem>>,
+    pub font: TerminalFont,
+    pub parent_location: Handle<Location>,
+}
+
 /// TerminalView is the into a terminal's screen lines.
 ///
 /// - It always contains a single [`Visual`] for each line. Even if this line is currently not
@@ -97,22 +104,19 @@ impl TerminalView {
     /// Scene is needed to pre-create all the rows. This in turn prevents us from caring too much
     /// lazily creating them later, but may put a little more pressure on the renderer to filter out
     /// unused visuals.
-    pub fn new(
-        font_system: Arc<Mutex<FontSystem>>,
-        font: TerminalFont,
-        scroll_offset: StableRowIndex,
-        parent_location: Handle<Location>,
-        scene: &Scene,
-    ) -> Self {
-        let line_height = font.cell_size_px().1;
+    pub fn new(params: TerminalViewParams, scene: &Scene, scroll_offset: StableRowIndex) -> Self {
+        let line_height = params.font.cell_size_px().1;
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * line_height as u64;
-        let locations =
-            ScrollLocations::new(parent_location, line_height, scroll_offset_px.cast_signed());
+        let locations = ScrollLocations::new(
+            params.parent_location,
+            line_height,
+            scroll_offset_px.cast_signed(),
+        );
 
         Self {
-            font_system,
-            font,
+            font_system: params.font_system,
+            font: params.font,
             color_palette: ColorPalette::default(),
             locations,
             scroll_offset_px: scene.animated(scroll_offset_px as f64),
