@@ -3,7 +3,11 @@ use std::ops::Range;
 
 use wezterm_term::StableRowIndex;
 
-use crate::{range_ops::WithLength, terminal::TerminalGeometry, window_geometry::PixelPoint};
+use crate::{
+    range_ops::WithLength,
+    terminal::{NormalizedSelectionRange, Selection, SelectionRange, TerminalGeometry},
+    window_geometry::PixelPoint,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ViewGeometry {
@@ -41,10 +45,21 @@ impl ViewGeometry {
         self.terminal.terminal_size
     }
 
+    /// Computes the normalized selection range.
+    pub fn selection_range(&self, selection: &Selection) -> Option<NormalizedSelectionRange> {
+        match *selection {
+            Selection::Unselected => None,
+            Selection::Begun { .. } => None,
+            Selection::Selecting { from, to } => {
+                let to = self.hit_test_cell(to).into();
+                Some(SelectionRange::new(from, to).normalized())
+            }
+            Selection::Selected { from, to } => Some(SelectionRange::new(from, to).normalized()),
+        }
+    }
+
     /// Hit tests a pixel point on the view resulting in a column and a row.
-    ///
-    /// Both returned values might be out of their valid range.
-    pub fn hit_cell(&self, view_px: PixelPoint) -> (isize, StableRowIndex) {
+    pub fn hit_test_cell(&self, view_px: PixelPoint) -> CellHit {
         let (x, mut y) = view_px.into();
 
         let column = (x / self.terminal.cell_size_px.0 as f64).floor() as isize;
@@ -52,6 +67,16 @@ impl ViewGeometry {
         y -= self.stable_range_ascend_px as f64;
         let row = (y / self.terminal.cell_size_px.1 as f64).floor() as isize;
 
-        (column, row + self.stable_range.start)
+        CellHit {
+            column,
+            row: row + self.stable_range.start,
+        }
     }
+}
+
+/// A hit on a cell. Both values might be out of their valid range.
+#[derive(Debug)]
+pub struct CellHit {
+    pub column: isize,
+    pub row: StableRowIndex,
 }

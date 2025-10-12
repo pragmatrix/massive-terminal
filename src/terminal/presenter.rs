@@ -13,8 +13,7 @@ use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
     terminal::{
-        NormalizedSelectionRange, Selection, SelectionPos, SelectionRange, TerminalGeometry,
-        TerminalViewParams,
+        NormalizedSelectionRange, Selection, TerminalGeometry, TerminalViewParams, ViewGeometry,
     },
     window_geometry::PixelPoint,
 };
@@ -101,36 +100,12 @@ impl TerminalPresenter {
         // concept.
         self.view.apply_animations();
 
-        let selection_range = self.selection_range();
-
         let mut changes_intersect_with_selection = false;
 
         let terminal = self.terminal.lock();
-        let screen = terminal.screen();
-        let view = &mut self.view;
+        Self::sync_alt_screen(&terminal, &mut self.view, scene);
 
-        // Switch between primary and alt screen.
-        //
-        // Architecture: If we do switch here, we overwrite all scrolling / apply animations done
-        // above, this seems broken. I.e. animations do not need to be applied in this case.
-        // And what if scrolling later interferes with a switch?
-        {
-            let alt_screen_active = terminal.is_alt_screen_active();
-            if alt_screen_active != view.alt_screen {
-                // Switch
-                let scroll_offset = screen.visible_row_to_stable_row(0);
-                info!(
-                    "Switching to {} view at scroll offset {scroll_offset}",
-                    if alt_screen_active {
-                        "alternate"
-                    } else {
-                        "primary"
-                    }
-                );
-                let params = view.params.clone();
-                *view = TerminalView::new(params, alt_screen_active, scene, scroll_offset);
-            }
-        }
+        let screen = terminal.screen();
 
         // Performance: No need to begin an update cycle if there are no visible changes
         let current_seq_no = terminal.current_seqno();
@@ -151,23 +126,27 @@ impl TerminalPresenter {
             .visible_row_to_stable_row(0)
             .with_len(screen.physical_rows);
 
+        let view = &mut self.view;
+
         // We need to scroll first, so that the visible range is up to date (even though this should
         // not make a difference when the view is currently animating, because animations are not
         // applied instantly).
-        match &mut self.scroll_state {
-            ScrollState::Auto => {
-                view.scroll_to_stable(terminal_visible_stable_range.start);
-            }
-            ScrollState::RestingRow(stable_row) => {
-                view.scroll_to_stable(*stable_row);
-            }
-            ScrollState::RestingPixel(pixel) => {
-                view.scroll_to_px(*pixel);
-            }
-            ScrollState::SelectionScroll(scroller) => {
-                let current_px_offset = view.current_scroll_offset_px();
-                let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
-                view.scroll_to_px(current_px_offset + scaled_velocity);
+        {
+            match &mut self.scroll_state {
+                ScrollState::Auto => {
+                    view.scroll_to_stable(terminal_visible_stable_range.start);
+                }
+                ScrollState::RestingRow(stable_row) => {
+                    view.scroll_to_stable(*stable_row);
+                }
+                ScrollState::RestingPixel(pixel) => {
+                    view.scroll_to_px(*pixel);
+                }
+                ScrollState::SelectionScroll(scroller) => {
+                    let current_px_offset = view.current_scroll_offset_px();
+                    let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
+                    view.scroll_to_px(current_px_offset + scaled_velocity);
+                }
             }
         }
 
@@ -176,8 +155,7 @@ impl TerminalPresenter {
             screen.scrollback_rows(), /* does include the visible part */
         );
 
-        // Get the range of lines the view is showing currently.
-        let view_stable_range = view.geometry(&self.geometry).stable_range;
+        let view_geometry = view.geometry(&self.geometry);
 
         // This is now temporarily disabled. It may start flickering at situations we go past
         // the scrollback buffer, but otherwise it reduces the animation smoothness.
@@ -199,6 +177,8 @@ impl TerminalPresenter {
             );
         }
 
+        let view_stable_range = view_geometry.stable_range.clone();
+
         // Set up the lines to update with the ones the view requests explicitly (For example caused
         // through scrolling).
         let (mut view_update, mut lines_requested) =
@@ -206,6 +186,8 @@ impl TerminalPresenter {
 
         // The range of existing lines in the terminal that intersect with the view_stable_range.
         let terminal_view_lines = terminal_full_stable_range.intersect(&view_stable_range);
+
+        let selection_range = view_geometry.selection_range(&self.selection);
 
         // Extend the range by the lines that have actually changed in the view range.
         //
@@ -316,6 +298,31 @@ impl TerminalPresenter {
 
         Ok(())
     }
+
+    fn sync_alt_screen(terminal: &Terminal, view: &mut TerminalView, scene: &Scene) {
+        // Switch between primary and alt screen.
+        //
+        // Architecture: If we do switch here, we overwrite all scrolling / apply animations done
+        // above, this seems broken. I.e. animations do not need to be applied in this case.
+        // And what if scrolling later interferes with a switch?
+        {
+            let alt_screen_active = terminal.is_alt_screen_active();
+            if alt_screen_active != view.alt_screen {
+                // Switch
+                let scroll_offset = terminal.screen().visible_row_to_stable_row(0);
+                info!(
+                    "Switching to {} view at scroll offset {scroll_offset}",
+                    if alt_screen_active {
+                        "alternate"
+                    } else {
+                        "primary"
+                    }
+                );
+                let params = view.params.clone();
+                *view = TerminalView::new(params, alt_screen_active, scene, scroll_offset);
+            }
+        }
+    }
 }
 
 // Selection
@@ -324,7 +331,7 @@ impl TerminalPresenter {
     pub fn selection_begin(&mut self, hit: PixelPoint) {
         self.selection_clear();
         self.selection
-            .begin(self.pixel_coords_to_selection_pos(hit));
+            .begin(self.view_geometry().hit_test_cell(hit).into());
     }
 
     pub fn selection_clear(&mut self) {
@@ -357,8 +364,8 @@ impl TerminalPresenter {
             Progress::Commit => {
                 self.clear_selection_scroller();
                 if let Some(end) = self.selection.selecting_end() {
-                    let pos = self.pixel_coords_to_selection_pos(end);
-                    self.selection.end(pos)
+                    let pos = self.view_geometry().hit_test_cell(end);
+                    self.selection.end(pos.into())
                 }
             }
             Progress::Cancel => {
@@ -369,22 +376,11 @@ impl TerminalPresenter {
     }
 
     pub fn selection_range(&self) -> Option<NormalizedSelectionRange> {
-        match self.selection {
-            Selection::Unselected => None,
-            Selection::Begun { .. } => None,
-            Selection::Selecting { from, to } => {
-                let to = self.pixel_coords_to_selection_pos(to);
-                Some(SelectionRange::new(from, to).normalized())
-            }
-            Selection::Selected { from, to } => Some(SelectionRange::new(from, to).normalized()),
-        }
+        self.view_geometry().selection_range(&self.selection)
     }
 
-    pub fn pixel_coords_to_selection_pos(&self, hit: PixelPoint) -> SelectionPos {
-        let geometry = self.view.geometry(&self.geometry);
-        let (column, stable_row) = geometry.hit_cell(hit);
-
-        SelectionPos::new(column.max(0) as usize, stable_row)
+    pub fn view_geometry(&self) -> ViewGeometry {
+        self.view.geometry(self.geometry())
     }
 }
 
