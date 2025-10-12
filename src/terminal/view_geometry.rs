@@ -5,7 +5,7 @@ use wezterm_term::StableRowIndex;
 
 use crate::{range_ops::WithLength, terminal::TerminalGeometry, window_geometry::PixelPoint};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ViewGeometry {
     pub terminal: TerminalGeometry,
 

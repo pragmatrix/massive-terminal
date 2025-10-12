@@ -33,8 +33,6 @@ pub struct TerminalPresenter {
     scroll_state: ScrollState,
     selection: Selection,
 
-    // ... to regenerate views when we change to the alt screen or back.
-    view_params: TerminalViewParams,
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
 
@@ -58,7 +56,6 @@ impl TerminalPresenter {
             scroll_state: Default::default(),
             selection: Default::default(),
 
-            view_params,
             last_rendered_seq_no,
             temporary_line_buf: Vec::new(),
 
@@ -102,7 +99,7 @@ impl TerminalPresenter {
         // in sync with the updated lines which results in flickering while scrolling (i.e.
         // lines disappearing too early when scrolling up).
         //
-        // Architecture: This is a pointer to what's actually wrong with the ApplyAnimations
+        // Architecture: This is an indication of what's actually wrong with the ApplyAnimations
         // concept.
         self.view.apply_animations();
 
@@ -117,7 +114,8 @@ impl TerminalPresenter {
         // Switch between primary and alt screen.
         //
         // Architecture: If we do switch here, we overwrite all scrolling / apply animations done
-        // above, this seems broken.
+        // above, this seems broken. I.e. animations do not need to be applied in this case.
+        // And what if scrolling later interferes with a switch?
         {
             let alt_screen_active = terminal.is_alt_screen_active();
             if alt_screen_active != self.alt_screen_active {
@@ -131,7 +129,8 @@ impl TerminalPresenter {
                         "primary"
                     }
                 );
-                *view = TerminalView::new(self.view_params.clone(), scene, scroll_offset);
+                let params = view.params.clone();
+                *view = TerminalView::new(params, scene, scroll_offset);
                 self.alt_screen_active = alt_screen_active;
             }
         }

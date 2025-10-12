@@ -55,9 +55,7 @@ pub struct TerminalViewParams {
 /// terminal screen.
 #[derive(Debug)]
 pub struct TerminalView {
-    font_system: Arc<Mutex<FontSystem>>,
-    /// The terminal font.
-    font: TerminalFont,
+    pub params: TerminalViewParams,
     color_palette: ColorPalette,
 
     locations: ScrollLocations,
@@ -109,14 +107,13 @@ impl TerminalView {
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * line_height as u64;
         let locations = ScrollLocations::new(
-            params.parent_location,
+            params.parent_location.clone(),
             line_height,
             scroll_offset_px.cast_signed(),
         );
 
         Self {
-            font_system: params.font_system,
-            font: params.font,
+            params,
             color_palette: ColorPalette::default(),
             locations,
             scroll_offset_px: scene.animated(scroll_offset_px as f64),
@@ -166,7 +163,11 @@ impl TerminalView {
     }
 
     fn line_height_px(&self) -> u32 {
-        self.font.cell_size_px().1
+        self.font().cell_size_px().1
+    }
+
+    fn font(&self) -> &TerminalFont {
+        &self.params.font
     }
 
     /// Finalize the current animations.
@@ -200,7 +201,7 @@ impl TerminalView {
         assert!(rows >= 1);
 
         // First pixel visible inside the screen viewed.
-        let line_height_px = self.font.cell_size_px().1 as i64;
+        let line_height_px = self.font().cell_size_px().1 as i64;
 
         let topmost_pixel_line_visible = self.current_scroll_offset_px_snapped();
         let topmost_stable_render_line = topmost_pixel_line_visible.div_euclid(line_height_px);
@@ -381,7 +382,7 @@ impl TerminalView {
             let shapes = {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
-                let mut font_system = self.font_system.lock().unwrap();
+                let mut font_system = self.params.font_system.lock().unwrap();
                 self.line_to_shapes(&mut font_system, top, line)?
             };
 
@@ -411,17 +412,17 @@ impl TerminalView {
         for cluster in clusters {
             let run = Self::cluster_to_run(
                 font_system,
-                &self.font,
+                self.font(),
                 &self.color_palette,
                 (left, top),
                 &cluster,
             )?;
 
             let background =
-                Self::cluster_background(&cluster, &self.font, &self.color_palette, (left, top));
+                Self::cluster_background(&cluster, self.font(), &self.color_palette, (left, top));
 
             if let Some(run) = run {
-                left += cluster.width as i64 * self.font.cell_size_px().0 as i64;
+                left += cluster.width as i64 * self.font().cell_size_px().0 as i64;
                 shapes.push(run.into());
             }
 
@@ -610,7 +611,7 @@ impl TerminalView {
 
     fn cursor_shape(&self, ty: CursorShapeType, column: usize, y_offset_px: i64) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
-        let cell_size = self.font.cell_size_px();
+        let cell_size = self.font().cell_size_px();
         let left = cell_size.0 * column as u32;
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
@@ -636,7 +637,7 @@ impl TerminalView {
             CursorShapeType::Underline => Rect::new(
                 (
                     left as _,
-                    ((y_offset_px + self.font.ascender_px as i64) as f64) as _,
+                    ((y_offset_px + self.font().ascender_px as i64) as f64) as _,
                 ),
                 (cell_size.0 as _, stroke_thickness),
             ),
