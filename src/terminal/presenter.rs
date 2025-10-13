@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
 use derive_more::Debug;
@@ -7,7 +7,7 @@ use log::{debug, info};
 use massive_animation::TimeScale;
 use parking_lot::Mutex;
 use termwiz::surface::SequenceNo;
-use wezterm_term::{Line, StableRowIndex, Terminal};
+use wezterm_term::{Line, Screen, StableRowIndex, Terminal};
 
 use crate::{
     TerminalView, WindowState,
@@ -120,15 +120,7 @@ impl TerminalPresenter {
         let terminal_updated = current_seq_no > self.last_rendered_seq_no;
         assert!(current_seq_no >= self.last_rendered_seq_no);
 
-        // The stable range of the visible part of the terminal.
-        let terminal_visible_stable_range = screen
-            .visible_row_to_stable_row(0)
-            .with_len(screen.physical_rows);
-
-        // The range the terminal has line data for.
-        let terminal_full_stable_range = screen.phys_to_stable_row_index(0).with_len(
-            screen.scrollback_rows(), /* does include the visible part */
-        );
+        let screen_geometry = ScreenGeometry::new(screen);
 
         let view = &mut self.view;
 
@@ -138,12 +130,12 @@ impl TerminalPresenter {
         {
             match &mut self.scroll_state {
                 ScrollState::Auto => {
-                    view.scroll_to_stable(terminal_visible_stable_range.start);
+                    view.scroll_to_stable(screen_geometry.visible_range.start);
                 }
                 ScrollState::RestingPixel(pixel) => {
                     let scroll_offset_px = self
                         .geometry
-                        .clamp_px_offset(terminal_full_stable_range.clone(), *pixel);
+                        .clamp_px_offset(screen_geometry.buffer_range.clone(), *pixel);
                     view.scroll_to_px(scroll_offset_px);
                 }
                 ScrollState::SelectionScroll(scroller) => {
@@ -152,7 +144,7 @@ impl TerminalPresenter {
                     let final_px_offset = current_px_offset + scaled_velocity;
                     let final_px_offset_clamped = self
                         .geometry
-                        .clamp_px_offset(terminal_full_stable_range.clone(), final_px_offset);
+                        .clamp_px_offset(screen_geometry.buffer_range.clone(), final_px_offset);
                     view.scroll_to_px(final_px_offset_clamped);
                 }
             }
@@ -188,7 +180,7 @@ impl TerminalPresenter {
             view.begin_update(scene, view_visible_range.clone());
 
         // The range of existing lines in the terminal that intersect with the view_stable_range.
-        let terminal_view_lines = terminal_full_stable_range.intersect(&view_visible_range);
+        let terminal_view_lines = screen_geometry.buffer_range.intersect(&view_visible_range);
 
         // Extend the lines_requested range by the lines that have actually changed in the view
         // range.
@@ -214,7 +206,7 @@ impl TerminalPresenter {
         //
         // Performance: Only lines_requested could be out of the full stable range.
         let terminal_lines_requested =
-            lines_requested.intersection_with_range(terminal_full_stable_range.clone());
+            lines_requested.intersection_with_range(screen_geometry.buffer_range.clone());
 
         let out_of_terminal_range_requested = {
             lines_requested.remove_set(&terminal_lines_requested);
@@ -224,7 +216,7 @@ impl TerminalPresenter {
         for stable_range in terminal_lines_requested.iter() {
             // Detail: This function returns bogus (wraps) if stable range is out of range, so we
             // must be sure to not request lines outside of the stable bounds.
-            debug_assert!(stable_range.is_inside(&terminal_full_stable_range));
+            debug_assert!(stable_range.is_inside(&screen_geometry.buffer_range));
             let phys_range = screen.stable_range(stable_range);
 
             // Performance: After a terminal `clear`, _all_ lines below the cursor are
@@ -239,7 +231,7 @@ impl TerminalPresenter {
         }
 
         let cursor_pos = terminal.cursor_pos();
-        let cursor_stable_y = terminal_visible_stable_range.start + cursor_pos.y as StableRowIndex;
+        let cursor_stable_y = screen_geometry.visible_range.start + cursor_pos.y as StableRowIndex;
         let columns = screen.physical_cols;
 
         // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
@@ -295,7 +287,7 @@ impl TerminalPresenter {
                 selection_range
                     // The clamping is needed, otherwise we could keep too many matrix locations.
                     // Architecture: The clamping should happen in the view (there where the problem arises)
-                    .and_then(|range| range.clamp_to_rows(terminal_full_stable_range, columns)),
+                    .and_then(|range| range.clamp_to_rows(screen_geometry.buffer_range, columns)),
                 &self.geometry,
             );
         }
@@ -445,4 +437,29 @@ enum ScrollState {
 struct SelectionScroller {
     velocity: f64,
     time_scale: TimeScale,
+}
+
+#[derive(Debug)]
+struct ScreenGeometry {
+    // The stable range of the visible part of the terminal.
+    pub visible_range: Range<StableRowIndex>,
+    // The range the terminal has line data for.
+    pub buffer_range: Range<StableRowIndex>,
+}
+
+impl ScreenGeometry {
+    pub fn new(screen: &Screen) -> Self {
+        let visible_range = screen
+            .visible_row_to_stable_row(0)
+            .with_len(screen.physical_rows);
+
+        let buffer_range = screen.phys_to_stable_row_index(0).with_len(
+            screen.scrollback_rows(), /* does include the visible part */
+        );
+
+        Self {
+            visible_range,
+            buffer_range,
+        }
+    }
 }
