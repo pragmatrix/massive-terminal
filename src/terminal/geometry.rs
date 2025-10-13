@@ -42,12 +42,16 @@ impl TerminalGeometry {
 
     /// Given a stable range of all the content and a pixel offset, clip the offset so that the
     /// terminal's view does not move the view into the terminal out of range.
-    pub fn clamped_px_offset(&self, content_stable_range: Range<StableRowIndex>, px: f64) -> f64 {
-        let line_height = self.line_height_px();
-        let min = content_stable_range.start as i64 * line_height as i64;
-        let max = (content_stable_range.end as i64 - self.rows() as i64) * line_height as i64;
+    pub fn clamp_px_offset(&self, content_stable_range: Range<StableRowIndex>, px: f64) -> f64 {
+        let min = self.stable_px_offset(content_stable_range.start);
+        let max = self.stable_px_offset(content_stable_range.end - self.rows().cast_signed());
         assert!(max >= min);
         px.clamp(min as f64, max as f64)
+    }
+
+    /// Returns the unclamped px offset of a stable row index.
+    pub fn stable_px_offset(&self, stable: StableRowIndex) -> i64 {
+        stable as i64 * self.line_height_px() as i64
     }
 
     pub fn line_height_px(&self) -> u32 {

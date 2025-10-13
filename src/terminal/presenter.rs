@@ -139,12 +139,11 @@ impl TerminalPresenter {
                 ScrollState::Auto => {
                     view.scroll_to_stable(terminal_visible_stable_range.start);
                 }
-                ScrollState::RestingRow(stable_row) => {
-                    // Should probably be clamped to be inside terminal_content_stable_range.
-                    view.scroll_to_stable(*stable_row);
-                }
                 ScrollState::RestingPixel(pixel) => {
-                    view.scroll_to_px(*pixel);
+                    let scroll_offset_px = self
+                        .geometry
+                        .clamp_px_offset(terminal_content_stable_range, *pixel);
+                    view.scroll_to_px(scroll_offset_px);
                 }
                 ScrollState::SelectionScroll(scroller) => {
                     let current_px_offset = view.current_scroll_offset_px();
@@ -152,7 +151,7 @@ impl TerminalPresenter {
                     let final_px_offset = current_px_offset + scaled_velocity;
                     let final_px_offset_clamped = self
                         .geometry
-                        .clamped_px_offset(terminal_content_stable_range, final_px_offset);
+                        .clamp_px_offset(terminal_content_stable_range, final_px_offset);
                     view.scroll_to_px(final_px_offset_clamped);
                 }
             }
@@ -428,7 +427,9 @@ impl TerminalPresenter {
             } else {
                 (geometry.stable_range.start + 1).max(0)
             };
-            self.scroll_state = ScrollState::RestingRow(resting_row);
+
+            self.scroll_state =
+                ScrollState::RestingPixel(self.geometry.stable_px_offset(resting_row) as f64);
         }
     }
 }
@@ -438,9 +439,8 @@ enum ScrollState {
     /// Automatically scroll to the cursor position / last line.
     #[default]
     Auto,
-    /// We are at a stable resting position.
-    RestingRow(StableRowIndex),
-    /// We are at a stable resting pixel position. This is used for mouse wheel scrolling.
+    /// We are at a stable resting pixel position. This is used for mouse wheel scrolling and when
+    /// the selection scrolling stops.
     RestingPixel(f64),
     /// The selection is currently controlling the scrolling with a particular velocity.
     SelectionScroll(SelectionScroller),
