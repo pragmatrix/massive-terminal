@@ -212,7 +212,6 @@ impl TerminalPresenter {
 
         let cursor_pos = terminal.cursor_pos();
         let cursor_stable_y = screen_geometry.visible_range.start + cursor_pos.y as StableRowIndex;
-        let columns = screen.physical_cols;
 
         // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
         // changes can be pushed to it as fast as possible.
@@ -267,7 +266,9 @@ impl TerminalPresenter {
                 selection_range
                     // The clamping is needed, otherwise we could keep too many matrix locations.
                     // Architecture: The clamping should happen in the view (there where the problem arises)
-                    .and_then(|range| range.clamp_to_rows(screen_geometry.buffer_range, columns)),
+                    .and_then(|range| {
+                        range.clamp_to_rows(screen_geometry.buffer_range, screen_geometry.columns)
+                    }),
                 &self.geometry,
             );
         }
@@ -453,6 +454,7 @@ struct ScreenGeometry {
     pub visible_range: Range<StableRowIndex>,
     // The range the terminal has line data for.
     pub buffer_range: Range<StableRowIndex>,
+    pub columns: usize,
 }
 
 impl ScreenGeometry {
@@ -468,6 +470,7 @@ impl ScreenGeometry {
         Self {
             visible_range,
             buffer_range,
+            columns: screen.physical_cols,
         }
     }
 }
