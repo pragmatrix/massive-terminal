@@ -13,5 +13,6 @@
         "termwiz",
         "tickery",
         "wezterm"
-    ]
+    ],
+    "chatgpt.commentCodeLensEnabled": false
 }
