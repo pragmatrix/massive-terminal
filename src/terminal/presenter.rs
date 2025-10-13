@@ -105,7 +105,7 @@ impl TerminalPresenter {
 
         let screen = terminal.screen();
 
-        // Performance: No need to begin an update cycle if there are no visible changes
+        // Performance: May be there is need to lock the terminal if there are no visible changes
         let current_seq_no = terminal.current_seqno();
         let terminal_updated = current_seq_no > self.last_rendered_seq_no;
         assert!(current_seq_no >= self.last_rendered_seq_no);
@@ -124,6 +124,11 @@ impl TerminalPresenter {
             .visible_row_to_stable_row(0)
             .with_len(screen.physical_rows);
 
+        // The stable range of the physical lines that the terminal contains. This includes the
+        // scrollback buffer and the lines that are visible.
+        let terminal_content_stable_range =
+            screen.phys_to_stable_row_index(0)..terminal_visible_stable_range.end;
+
         let view = &mut self.view;
 
         // We need to scroll first, so that the visible range is up to date (even though this should
@@ -135,6 +140,7 @@ impl TerminalPresenter {
                     view.scroll_to_stable(terminal_visible_stable_range.start);
                 }
                 ScrollState::RestingRow(stable_row) => {
+                    // Should probably be clamped to be inside terminal_content_stable_range.
                     view.scroll_to_stable(*stable_row);
                 }
                 ScrollState::RestingPixel(pixel) => {
@@ -143,7 +149,11 @@ impl TerminalPresenter {
                 ScrollState::SelectionScroll(scroller) => {
                     let current_px_offset = view.current_scroll_offset_px();
                     let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
-                    view.scroll_to_px(current_px_offset + scaled_velocity);
+                    let final_px_offset = current_px_offset + scaled_velocity;
+                    let final_px_offset_clamped = self
+                        .geometry
+                        .clamped_px_offset(terminal_content_stable_range, final_px_offset);
+                    view.scroll_to_px(final_px_offset_clamped);
                 }
             }
         }
@@ -175,30 +185,33 @@ impl TerminalPresenter {
             );
         }
 
-        let view_stable_range = view_geometry.stable_range.clone();
+        let view_visible_range = view_geometry.stable_range.clone();
 
         // Set up the lines to update with the ones the view requests explicitly (For example caused
         // through scrolling).
         let (mut view_update, mut lines_requested) =
-            view.begin_update(scene, view_stable_range.clone());
+            view.begin_update(scene, view_visible_range.clone());
 
         // The range of existing lines in the terminal that intersect with the view_stable_range.
-        let terminal_view_lines = terminal_full_stable_range.intersect(&view_stable_range);
+        let terminal_view_lines = terminal_full_stable_range.intersect(&view_visible_range);
 
         let selection_range = view_geometry.selection_range(&self.selection);
 
-        // Extend the range by the lines that have actually changed in the view range.
+        // Extend the lines_requested range by the lines that have actually changed in the view
+        // range.
         //
-        // Detail: Need to pass a valid terminal range, passing a larger range would return
-        // lines outside of the requested range because of internal alignment rules.
-
+        // Detail: Need to pass a valid terminal range, passing a larger range would return lines
+        // outside of the requested range because of internal alignment rules.
+        //
+        // Architecture: Changed lines should probably be a range set (see it's later use in the
+        // selection part)?
         let mut changed_lines = Vec::new();
         if terminal_updated && let Some(terminal_range) = terminal_view_lines {
             changed_lines =
                 screen.get_changed_stable_rows(terminal_range, self.last_rendered_seq_no);
 
             changed_lines.iter().for_each(|l| {
-                debug_assert!(view_stable_range.contains(l));
+                debug_assert!(view_visible_range.contains(l));
                 lines_requested.add(*l)
             })
         }

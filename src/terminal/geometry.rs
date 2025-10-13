@@ -1,4 +1,7 @@
+use std::ops::Range;
+
 use portable_pty::PtySize;
+use wezterm_term::StableRowIndex;
 
 use crate::window_geometry::PixelPoint;
 
@@ -35,6 +38,16 @@ impl TerminalGeometry {
 
     pub fn rows(&self) -> usize {
         self.terminal_size.1
+    }
+
+    /// Given a stable range of all the content and a pixel offset, clip the offset so that the
+    /// terminal's view does not move the view into the terminal out of range.
+    pub fn clamped_px_offset(&self, content_stable_range: Range<StableRowIndex>, px: f64) -> f64 {
+        let line_height = self.line_height_px();
+        let min = content_stable_range.start as i64 * line_height as i64;
+        let max = (content_stable_range.end as i64 - self.rows() as i64) * line_height as i64;
+        assert!(max >= min);
+        px.clamp(min as f64, max as f64)
     }
 
     pub fn line_height_px(&self) -> u32 {
