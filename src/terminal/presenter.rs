@@ -124,10 +124,10 @@ impl TerminalPresenter {
             .visible_row_to_stable_row(0)
             .with_len(screen.physical_rows);
 
-        // The stable range of the physical lines that the terminal contains. This includes the
-        // scrollback buffer and the lines that are visible.
-        let terminal_content_stable_range =
-            screen.phys_to_stable_row_index(0)..terminal_visible_stable_range.end;
+        // The range the terminal has line data for.
+        let terminal_full_stable_range = screen.phys_to_stable_row_index(0).with_len(
+            screen.scrollback_rows(), /* does include the visible part */
+        );
 
         let view = &mut self.view;
 
@@ -142,7 +142,7 @@ impl TerminalPresenter {
                 ScrollState::RestingPixel(pixel) => {
                     let scroll_offset_px = self
                         .geometry
-                        .clamp_px_offset(terminal_content_stable_range, *pixel);
+                        .clamp_px_offset(terminal_full_stable_range.clone(), *pixel);
                     view.scroll_to_px(scroll_offset_px);
                 }
                 ScrollState::SelectionScroll(scroller) => {
@@ -151,16 +151,11 @@ impl TerminalPresenter {
                     let final_px_offset = current_px_offset + scaled_velocity;
                     let final_px_offset_clamped = self
                         .geometry
-                        .clamp_px_offset(terminal_content_stable_range, final_px_offset);
+                        .clamp_px_offset(terminal_full_stable_range.clone(), final_px_offset);
                     view.scroll_to_px(final_px_offset_clamped);
                 }
             }
         }
-
-        // The range the terminal has line data for.
-        let terminal_full_stable_range = screen.phys_to_stable_row_index(0).with_len(
-            screen.scrollback_rows(), /* does include the visible part */
-        );
 
         let view_geometry = view.geometry(&self.geometry);
 
