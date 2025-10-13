@@ -127,28 +127,8 @@ impl TerminalPresenter {
         // We need to scroll first, so that the visible range is up to date (even though this should
         // not make a difference when the view is currently animating, because animations are not
         // applied instantly).
-        {
-            match &mut self.scroll_state {
-                ScrollState::Auto => {
-                    view.scroll_to_stable(screen_geometry.visible_range.start);
-                }
-                ScrollState::RestingPixel(pixel) => {
-                    let scroll_offset_px = self
-                        .geometry
-                        .clamp_px_offset(screen_geometry.buffer_range.clone(), *pixel);
-                    view.scroll_to_px(scroll_offset_px);
-                }
-                ScrollState::SelectionScroll(scroller) => {
-                    let current_px_offset = view.current_scroll_offset_px();
-                    let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
-                    let final_px_offset = current_px_offset + scaled_velocity;
-                    let final_px_offset_clamped = self
-                        .geometry
-                        .clamp_px_offset(screen_geometry.buffer_range.clone(), final_px_offset);
-                    view.scroll_to_px(final_px_offset_clamped);
-                }
-            }
-        }
+        self.scroll_state
+            .apply_to_view(view, &self.geometry, &screen_geometry);
 
         let view_geometry = view.geometry(&self.geometry);
 
@@ -437,6 +417,34 @@ enum ScrollState {
 struct SelectionScroller {
     velocity: f64,
     time_scale: TimeScale,
+}
+
+impl ScrollState {
+    fn apply_to_view(
+        &mut self,
+        view: &mut TerminalView,
+        geometry: &TerminalGeometry,
+        screen_geometry: &ScreenGeometry,
+    ) {
+        match self {
+            ScrollState::Auto => {
+                view.scroll_to_stable(screen_geometry.visible_range.start);
+            }
+            ScrollState::RestingPixel(pixel) => {
+                let scroll_offset_px =
+                    geometry.clamp_px_offset(screen_geometry.buffer_range.clone(), *pixel);
+                view.scroll_to_px(scroll_offset_px);
+            }
+            ScrollState::SelectionScroll(scroller) => {
+                let current_px_offset = view.current_scroll_offset_px();
+                let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
+                let final_px_offset = current_px_offset + scaled_velocity;
+                let final_px_offset_clamped =
+                    geometry.clamp_px_offset(screen_geometry.buffer_range.clone(), final_px_offset);
+                view.scroll_to_px(final_px_offset_clamped);
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
