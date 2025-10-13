@@ -91,6 +91,16 @@ impl TerminalPresenter {
     }
 
     /// Update the view lines, cursor, and selection.
+    ///
+    /// WezTerm terms:
+    ///
+    /// - Physical 0: The first line at the beginning of the scrollback buffer. The first line
+    ///   stored in the lines of the screen.
+    ///
+    /// - Stable 0: The first line of the initial output. A scrolling line stays at the same index.
+    ///   Would be equal to physical if the scrollback buffer would be infinite.
+    ///
+    /// - Visible 0: Top of the screen.
     pub fn update(&mut self, window_state: &WindowState, scene: &Scene) -> Result<()> {
         // Currently we need always apply view animations, otherwise the scroll matrix is not
         // in sync with the updated lines which results in flickering while scrolling (i.e.
@@ -109,15 +119,6 @@ impl TerminalPresenter {
         let current_seq_no = terminal.current_seqno();
         let terminal_updated = current_seq_no > self.last_rendered_seq_no;
         assert!(current_seq_no >= self.last_rendered_seq_no);
-
-        // Physical: 0: The first line at the beginning of the scrollback buffer. The first
-        // line stored in the lines of the screen.
-        //
-        // Stable: 0: The first line of the initial output. A scrolling line stays at the
-        // same index. Would be equal to physical if the scrollback buffer would be
-        // infinite.
-        //
-        // Visible: 0: Top of the screen.
 
         // The stable range of the visible part of the terminal.
         let terminal_visible_stable_range = screen
@@ -188,8 +189,6 @@ impl TerminalPresenter {
 
         // The range of existing lines in the terminal that intersect with the view_stable_range.
         let terminal_view_lines = terminal_full_stable_range.intersect(&view_visible_range);
-
-        let selection_range = view_geometry.selection_range(&self.selection);
 
         // Extend the lines_requested range by the lines that have actually changed in the view
         // range.
@@ -283,6 +282,7 @@ impl TerminalPresenter {
 
         // Update selection
         {
+            let selection_range = view_geometry.selection_range(&self.selection);
             let selection_rows = selection_range.map(|s| s.stable_rows()).unwrap_or_default();
             let changes_intersect_with_selection =
                 changed_lines.iter().any(|l| selection_rows.contains(l));
