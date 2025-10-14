@@ -240,6 +240,8 @@ impl TerminalView {
 // Updating
 
 impl TerminalView {
+    /// We use the RAII pattern to mark the end of the update so that we can see which lines we need
+    /// to preserve matrices for.
     pub fn begin_update<'a>(
         &'a mut self,
         scene: &'a Scene,

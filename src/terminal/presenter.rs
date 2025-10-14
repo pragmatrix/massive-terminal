@@ -124,12 +124,6 @@ impl TerminalPresenter {
 
         let view = &mut self.view;
 
-        // We need to scroll first, so that the visible range is up to date (even though this should
-        // not make a difference when the view is currently animating, because animations are not
-        // applied instantly).
-        self.scroll_state
-            .apply_to_view(view, &self.geometry, &screen_geometry);
-
         let view_geometry = view.geometry(&self.geometry);
 
         // This is now temporarily disabled. It may start flickering at situations we go past
@@ -267,15 +261,29 @@ impl TerminalPresenter {
                     // The clamping is needed, otherwise we could keep too many matrix locations.
                     // Architecture: The clamping should happen in the view (there where the problem arises)
                     .and_then(|range| {
-                        range.clamp_to_rows(screen_geometry.buffer_range, screen_geometry.columns)
+                        range.clamp_to_rows(
+                            screen_geometry.buffer_range.clone(),
+                            screen_geometry.columns,
+                        )
                     }),
                 &self.geometry,
             );
         }
 
+        drop(view_update);
+
         // Commit
+        //
+        // Architecture: May be last_rendered_seq_no belongs into the view?
 
         self.last_rendered_seq_no = current_seq_no;
+
+        // Now that we've done all updates. We apply the current scroll state to the view.
+        //
+        // Applying the scroll state has no immediate effect. Only at the time apply_animations is
+        // called.
+        self.scroll_state
+            .apply_to_view(view, &self.geometry, &screen_geometry);
 
         Ok(())
     }
