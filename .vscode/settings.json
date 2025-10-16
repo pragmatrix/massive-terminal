@@ -3,16 +3,21 @@
         "arboard",
         "blendings",
         "cellcluster",
+        "cgmath",
         "conpty",
+        "multiview",
         "openpty",
         "rangeset",
+        "rasterizer",
+        "rasterizers",
         "rustybuzz",
         "scrollback",
         "seqno",
         "termwindow",
         "termwiz",
         "tickery",
-        "wezterm"
+        "wezterm",
+        "wgsl"
     ],
     "chatgpt.commentCodeLensEnabled": false
 }
