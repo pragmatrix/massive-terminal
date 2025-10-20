@@ -18,7 +18,9 @@ use termwiz::{
     color::ColorAttribute,
     surface::{CursorShape, CursorVisibility},
 };
-use wezterm_term::{CursorPosition, Intensity, Line, StableRowIndex, color::ColorPalette};
+use wezterm_term::{
+    CursorPosition, Intensity, Line, StableRowIndex, Underline, color::ColorPalette,
+};
 
 use super::TerminalGeometry;
 use crate::{
@@ -80,15 +82,19 @@ pub struct TerminalView {
     /// No lines for the scrollback. And if we are _inside_ the scrollback buffer, no lines below.
     ///
     /// VecDeque because we want to optimize them for scrolling.
-    lines: VecDeque<LineVisual>,
+    lines: VecDeque<LineVisuals>,
     cursor: Option<Handle<Visual>>,
     selection: Option<SelectionVisual>,
 }
 
 #[derive(Debug)]
-struct LineVisual {
-    /// The visual representing the line.
+struct LineVisuals {
+    /// The visual representing the line (Currently includes background and text).
     visual: Handle<Visual>,
+
+    /// The visual for the overlays, like underlines.
+    overlays: Handle<Visual>,
+
     /// The top offset to add to all shapes.
     ///
     /// Might be negative for lines over the top of the terminal's stable range.
@@ -319,8 +325,14 @@ impl TerminalView {
 
         let mut new_visual = |stable_index| {
             let (location, top_offset) = self.locations.acquire_line_location(scene, stable_index);
-            let visual = scene.stage(Visual::new(location, []));
-            LineVisual { visual, top_offset }
+            // Performance: Don't stage visuals with empty shapes?
+            let visual = scene.stage(Visual::new(location.clone(), []));
+            let overlays = scene.stage(Visual::new(location, []).with_depth_bias(1));
+            LineVisuals {
+                visual,
+                overlays,
+                top_offset,
+            }
         };
 
         if !view_range.intersects(&current_range) {
@@ -392,15 +404,21 @@ impl TerminalView {
                 (update_range.start - self.first_line_stable_index + i as isize) as usize;
 
             let top = self.lines[line_index].top_offset;
-            let shapes = {
+            let (shapes, overlay_shapes) = {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
                 let mut font_system = self.params.font_system.lock().unwrap();
                 self.line_to_shapes(&mut font_system, top, line)?
             };
 
-            self.lines[line_index].visual.update_with(|v| {
+            let line_visuals = &mut self.lines[line_index];
+
+            line_visuals.visual.update_with(|v| {
                 v.shapes = shapes.into();
+            });
+
+            line_visuals.overlays.update_with(|v| {
+                v.shapes = overlay_shapes.into();
             });
         }
 
@@ -412,12 +430,14 @@ impl TerminalView {
         font_system: &mut FontSystem,
         top: i64,
         line: &Line,
-    ) -> Result<Vec<Shape>> {
+    ) -> Result<(Vec<Shape>, Vec<Shape>)> {
         // Production: Add bidi support
         let clusters = line.cluster(None);
 
-        // Performance: Background shapes are not included in the capacity.
+        // Performance: Background shapes are not included in the capacity. Use a temporary array here.
         let mut shapes: Vec<Shape> = Vec::with_capacity(clusters.len());
+        // Performance: Can we use some capacity here? Use a temporary array here?
+        let mut overlay_shapes = Vec::new();
         let mut left = 0;
 
         // Optimization: Combine clusters with compatible attributes. Colors and widths can vary
@@ -434,6 +454,9 @@ impl TerminalView {
             let background =
                 Self::cluster_background(&cluster, self.font(), &self.color_palette, (left, top));
 
+            let overlay =
+                Self::cluster_overlay(&cluster, self.font(), &self.color_palette, (left, top));
+
             if let Some(run) = run {
                 left += cluster.width as i64 * self.font().cell_size_px().0 as i64;
                 shapes.push(run.into());
@@ -442,9 +465,13 @@ impl TerminalView {
             if let Some(background) = background {
                 shapes.push(background)
             }
+
+            if let Some(overlay) = overlay {
+                overlay_shapes.push(overlay);
+            }
         }
 
-        Ok(shapes)
+        Ok((shapes, overlay_shapes))
     }
 
     fn cluster_to_run(
@@ -547,22 +574,22 @@ impl TerminalView {
         Ok(Some(run))
     }
 
-    /// Retrieves the background shape from the cluster.
+    /// Generates the background shape for the cluster.
     fn cluster_background(
         cluster: &CellCluster,
         font: &TerminalFont,
         color_palette: &ColorPalette,
         (left, top): (i64, i64),
     ) -> Option<Shape> {
-        let background = cluster.attrs.background();
+        let background_color = cluster.attrs.background();
         // We assume the background is rendered in the default background color.
-        if background == ColorAttribute::Default {
+        if background_color == ColorAttribute::Default {
             return None;
         }
-        let background = color::from_srgba(color_palette.resolve_bg(background));
+        let background_color = color::from_srgba(color_palette.resolve_bg(background_color));
 
         let size: Size = (
-            // Precision: We keep multiplication in the u32 range here. Unlikely it's breaking out.
+            // Precision: We keep multiplication in the u32 range here. Unlikely it's overflowing.
             (cluster.width as u32 * font.cell_size_px().0) as f64,
             font.cell_size_px().1 as f64,
         )
@@ -570,7 +597,61 @@ impl TerminalView {
 
         let lt: Point = (left as f64, top as f64).into();
 
-        Some(massive_shapes::Rect::new(Rect::new(lt, size), background).into())
+        Some(massive_shapes::Rect::new(Rect::new(lt, size), background_color).into())
+    }
+
+    /// Generates overlay shape for the cluster.
+    fn cluster_overlay(
+        cluster: &CellCluster,
+        font: &TerminalFont,
+        color_palette: &ColorPalette,
+        (left, top): (i64, i64),
+    ) -> Option<Shape> {
+        let underline = cluster.attrs.underline();
+        // Feature: Don't highlight if the hyperlink is not hovered over.
+        let effective_underline = match (cluster.attrs.hyperlink().is_some(), underline) {
+            (true, Underline::None) => Underline::Single,
+            (true, Underline::Single) => Underline::Double,
+            (true, _) => Underline::Single,
+            (false, u) => u,
+        };
+
+        // Feature: Implement overline
+        // Feature: Implement strikethrough
+        let underline_metrics = match effective_underline {
+            Underline::None => None,
+            Underline::Single => Some(&font.underline_px),
+            Underline::Double => Some(&font.double_underline_px),
+            // Feature: Implement the rest of them.
+            Underline::Curly => None,
+            Underline::Dotted => None,
+            Underline::Dashed => None,
+        };
+
+        if let Some(underline_metrics) = underline_metrics {
+            let lt: Point = (
+                left as f64,
+                (top + underline_metrics.position as i64) as f64,
+            )
+                .into();
+
+            let size: Size = (
+                // Precision: We keep multiplication in the u32 range here. Unlikely it's overflowing.
+                (cluster.width as u32 * font.cell_size_px().0) as f64,
+                underline_metrics.thickness as f64,
+            )
+                .into();
+
+            let mut color = cluster.attrs.underline_color();
+            if color == ColorAttribute::Default {
+                color = cluster.attrs.foreground()
+            }
+            let color = color::from_srgba(color_palette.resolve_fg(color));
+
+            return Some(massive_shapes::Rect::new(Rect::new(lt, size), color).into());
+        }
+
+        None
     }
 }
 

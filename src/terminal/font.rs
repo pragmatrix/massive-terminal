@@ -27,6 +27,16 @@ pub struct TerminalFont {
     pub descender_px: u32,
 
     pub glyph_advance_px: u32,
+
+    /// Converted to px. If not provided, a line at ascender_px.
+    pub underline_px: LineMetrics,
+    pub double_underline_px: LineMetrics,
+}
+
+#[derive(Debug, Clone)]
+pub struct LineMetrics {
+    pub position: u32,
+    pub thickness: u32,
 }
 
 impl TerminalFont {
@@ -57,7 +67,7 @@ impl TerminalFont {
             .try_into()
             .context("Unexpected font descender")?;
 
-        let glyph_size_em = {
+        let (glyph_width_em, glyph_height_em) = {
             let glyph_width = {
                 let glyph_index = hb_font
                     .glyph_index('M')
@@ -68,7 +78,7 @@ impl TerminalFont {
                 advance as u32
             };
             // Naming: This is font_height, not glyph height.
-            let glyph_height: usize = hb_font.height().try_into().context("Font height")?;
+            let glyph_height: u32 = hb_font.height().try_into().context("Font height")?;
             (glyph_width, glyph_height)
         };
 
@@ -78,8 +88,8 @@ impl TerminalFont {
 
         let glyph_size = {
             (
-                glyph_size_em.0 as f32 * font_size_f,
-                glyph_size_em.1 as f32 * font_size_f,
+                glyph_width_em as f32 * font_size_f,
+                glyph_height_em as f32 * font_size_f,
             )
         };
 
@@ -91,6 +101,29 @@ impl TerminalFont {
 
         let descender_px = cell_pixel_size.1 - ascender_px;
 
+        let underline_px = if let Some(underline_metrics) = hb_font.underline_metrics() {
+            println!("underline: {underline_metrics:?}");
+            // Precision: Make sure that the underline fits in the cell.
+            LineMetrics {
+                position: ((glyph_height_em as i32 + underline_metrics.position as i32) as f32
+                    * font_size_f)
+                    .trunc() as u32,
+                thickness: ((underline_metrics.thickness as f32 * font_size_f) as u32).max(1),
+            }
+        } else {
+            LineMetrics {
+                position: ascender_px,
+                // Precision: This should be relative to the font size.
+                thickness: 1,
+            }
+        };
+
+        let double_underline_px = LineMetrics {
+            position: underline_px.position,
+            // Precision: Make sure this fits in a cell / does not exceed descender.
+            thickness: underline_px.thickness * 2,
+        };
+
         Ok(Self {
             font,
             family_name,
@@ -98,11 +131,13 @@ impl TerminalFont {
             units_per_em: units_per_em.try_into().context("units per em")?,
             ascender_em,
             descender_em,
-            glyph_advance_em: glyph_size_em.0,
+            glyph_advance_em: glyph_width_em,
             glyph_size,
             ascender_px,
             descender_px,
             glyph_advance_px: cell_pixel_size.0,
+            underline_px,
+            double_underline_px,
         })
     }
 
