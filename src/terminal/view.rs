@@ -262,7 +262,7 @@ impl TerminalView {
         // matrix can be recreated any time).
         let mut visuals_range = self.first_line_stable_index.with_len(self.lines.len());
         if let Some(selection) = &self.selection {
-            // Review: Unioning the selection can have a nasty large range extension, which needs to
+            // Review: Unioning the selection can have a nasty large range extension, which needs
             // many locations active.
             visuals_range = visuals_range.union(selection.row_range.clone());
         }
@@ -306,7 +306,7 @@ impl TerminalView {
     /// This is the first step before lines can be updated.
     ///
     /// This returns a set of stable index ranges that are _required_ to be updated together with
-    /// the changed ones in the view_range.
+    /// the changed ones in the `view_range.
     ///
     /// This view_range is the one returned from `view_range()`.
     ///
@@ -381,6 +381,12 @@ impl TerminalView {
         debug_assert_eq!(
             view_range,
             self.first_line_stable_index.with_len(self.lines.len())
+        );
+
+        // The line updates returned shall never exceed the view_range passed in.
+        debug_assert_eq!(
+            required_line_updates.intersection_with_range(view_range),
+            required_line_updates
         );
 
         required_line_updates

@@ -258,8 +258,7 @@ impl MassiveTerminal {
             }
 
             {
-                // Update lines & cursor.
-
+                // Update lines, selection, and cursor.
                 self.presenter.update(&self.window_state, &self.scene)?;
             }
 
@@ -303,14 +302,21 @@ impl MassiveTerminal {
 
         let modifiers = ev.states().keyboard_modifiers();
 
-        // Process selecting user state
-
-        let hit_view_matrix = |p| {
+        let window_pos_to_terminal_view = |p| {
             self.renderer
                 .geometry()
                 .unproject_to_model_z0(p, &self.view_matrix.value())
                 .map(|p| (p.x, p.y).into())
         };
+
+        // Process mouse pointer
+
+        if let Some(pos) = ev.pos() {
+            let mouse_pointer = window_pos_to_terminal_view(pos);
+            self.presenter.set_mouse_pointer(mouse_pointer);
+        }
+
+        // Process selecting user state
 
         match &mut self.selecting {
             None => match ev.detect_mouse_gesture(MouseButton::Left, min_movement_distance) {
@@ -319,7 +325,7 @@ impl MassiveTerminal {
                     self.presenter.selection_clear();
                 }
                 Some(MouseGesture::Movement(movement)) => {
-                    if let Some(hit) = hit_view_matrix(movement.from) {
+                    if let Some(hit) = window_pos_to_terminal_view(movement.from) {
                         self.presenter.selection_begin(hit);
                         self.selecting = Some(movement);
                     }
@@ -328,7 +334,7 @@ impl MassiveTerminal {
             },
             Some(movement) => {
                 if let Some(progress) = movement.track_to(&ev) {
-                    let progress = progress.map_or_cancel(hit_view_matrix);
+                    let progress = progress.map_or_cancel(window_pos_to_terminal_view);
 
                     assert!(self.presenter.selection_can_progress());
                     self.presenter.selection_progress(&self.scene, progress);

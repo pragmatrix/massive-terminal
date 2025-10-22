@@ -74,7 +74,7 @@ impl ViewGeometry {
     }
 }
 
-/// A hit on a cell. Both values might be out of their valid range.
+/// A hit on a cell. Both values might be outside of the view's visibility or range.
 #[derive(Debug)]
 pub struct CellHit {
     pub column: isize,

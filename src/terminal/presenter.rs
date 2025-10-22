@@ -6,8 +6,9 @@ use log::{debug, info};
 
 use massive_animation::TimeScale;
 use parking_lot::Mutex;
+use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
-use wezterm_term::{Line, Screen, StableRowIndex, Terminal};
+use wezterm_term::{Hyperlink, Line, Screen, StableRowIndex, Terminal};
 
 use crate::{
     TerminalView, WindowState,
@@ -30,8 +31,14 @@ pub struct TerminalPresenter {
     pub terminal: Arc<Mutex<Terminal>>,
 
     scroll_state: ScrollState,
+    /// Position of the mouse pointer in pixel coordinates (so that we can update the cell it's
+    /// pointing to while scrolling).
+    mouse_pointer: Option<PixelPoint>,
+
     selection: Selection,
 
+    /// The currently highlighted hyper, refreshed in update.
+    highlighted_hyperlink: Option<HighlightedHyperlink>,
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
 
@@ -52,8 +59,10 @@ impl TerminalPresenter {
             terminal: Mutex::new(terminal).into(),
 
             scroll_state: Default::default(),
+            mouse_pointer: None,
             selection: Default::default(),
 
+            highlighted_hyperlink: None,
             last_rendered_seq_no,
             temporary_line_buf: Vec::new(),
 
@@ -110,21 +119,64 @@ impl TerminalPresenter {
         // concept.
         self.view.apply_animations();
 
-        let terminal = self.terminal.lock();
-        Self::sync_alt_screen(&terminal, &mut self.view, scene);
+        let mut terminal = self.terminal.lock();
 
-        let screen = terminal.screen();
+        Self::sync_alt_screen(&terminal, &mut self.view, scene);
 
         // Performance: May be there is need to lock the terminal if there are no visible changes
         let current_seq_no = terminal.current_seqno();
         let terminal_updated = current_seq_no > self.last_rendered_seq_no;
         assert!(current_seq_no >= self.last_rendered_seq_no);
 
-        let screen_geometry = ScreenGeometry::new(screen);
+        let screen_geometry = ScreenGeometry::new(terminal.screen());
 
         let view = &mut self.view;
 
         let view_geometry = view.geometry(&self.geometry);
+        let view_visible_range = view_geometry.stable_range.clone();
+
+        // Update hyperlink
+
+        let mut hyperlink_changed_lines = RangeSet::new();
+
+        {
+            let mut new_hyperlink = None;
+            if let Some(mouse_pointer) = self.mouse_pointer {
+                let cell_hit = view_geometry.hit_test_cell(mouse_pointer);
+                // Visible on our view.
+                if view_geometry.stable_range.contains(&cell_hit.row) && cell_hit.column >= 0 {
+                    let visible_y = cell_hit.row - screen_geometry.visible_range.start;
+                    if let Some(cell) = terminal
+                        .screen_mut()
+                        .get_cell(cell_hit.column.cast_unsigned(), visible_y as i64)
+                    {
+                        new_hyperlink = cell.attrs().hyperlink().cloned().map(|hyperlink| {
+                            HighlightedHyperlink {
+                                hyperlink,
+                                row: cell_hit.row,
+                            }
+                        });
+                    }
+                }
+            }
+
+            let screen = terminal.screen();
+
+            if self.highlighted_hyperlink != new_hyperlink {
+                if let Some(hyperlink) = &self.highlighted_hyperlink {
+                    hyperlink_changed_lines.add_range(hyperlink.find_coverage(screen));
+                }
+                if let Some(hyperlink) = &new_hyperlink {
+                    hyperlink_changed_lines.add_range(hyperlink.find_coverage(screen));
+                }
+
+                self.highlighted_hyperlink = new_hyperlink;
+            }
+        }
+
+        // Be sure the changed lines are not outside the currently visible range of the view.
+        hyperlink_changed_lines =
+            hyperlink_changed_lines.intersection_with_range(view_visible_range.clone());
 
         // This is now temporarily disabled. It may start flickering at situations we go past
         // the scrollback buffer, but otherwise it reduces the animation smoothness.
@@ -146,15 +198,18 @@ impl TerminalPresenter {
             );
         }
 
-        let view_visible_range = view_geometry.stable_range.clone();
-
         // Set up the lines to update with the ones the view requests explicitly (For example caused
         // through scrolling).
         let (mut view_update, mut lines_requested) =
             view.begin_update(scene, view_visible_range.clone());
 
+        // Add the hyperlink changed lines first.
+        lines_requested.add_set(&hyperlink_changed_lines);
+
         // The range of existing lines in the terminal that intersect with the view_stable_range.
         let terminal_view_lines = screen_geometry.buffer_range.intersect(&view_visible_range);
+
+        let screen = terminal.screen();
 
         // Extend the lines_requested range by the lines that have actually changed in the view
         // range.
@@ -176,7 +231,7 @@ impl TerminalPresenter {
         }
 
         // Now the updated lines are known, but some of them might not be inside the terminal's
-        // range. Split them between terminal lines and empty ones.
+        // buffer range. Split them between terminal lines and empty ones.
         //
         // Performance: Only lines_requested could be out of the full stable range.
         let terminal_lines_requested =
@@ -311,6 +366,14 @@ impl TerminalPresenter {
                 *view = TerminalView::new(params, alt_screen_active, scene, scroll_offset);
             }
         }
+    }
+}
+
+// Mouse Pointer (for hyperlink highlights)
+
+impl TerminalPresenter {
+    pub fn set_mouse_pointer(&mut self, hit: Option<PixelPoint>) {
+        self.mouse_pointer = hit;
     }
 }
 
@@ -480,5 +543,30 @@ impl ScreenGeometry {
             buffer_range,
             columns: screen.physical_cols,
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct HighlightedHyperlink {
+    hyperlink: Arc<Hyperlink>,
+    row: StableRowIndex,
+}
+
+impl HighlightedHyperlink {
+    fn find_coverage(&self, screen: &Screen) -> Range<StableRowIndex> {
+        // Performance: We may return only the physical range that actually contain the hyperlink.
+
+        let mut range = self.row.with_len(1);
+
+        screen.for_each_logical_line_in_stable_range(
+            range.clone(),
+            |physical_lines_covering_logical, _| {
+                range = physical_lines_covering_logical;
+                // Need to pick only on one line.
+                false // Don't continue
+            },
+        );
+
+        range
     }
 }
