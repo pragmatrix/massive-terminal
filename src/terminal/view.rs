@@ -312,7 +312,7 @@ impl TerminalView {
     /// This is the first step before lines can be updated.
     ///
     /// This returns a set of stable index ranges that are _required_ to be updated together with
-    /// the changed ones in the `view_range.
+    /// the changed ones in the `view_range`.
     ///
     /// This view_range is the one returned from `view_range()`.
     ///
