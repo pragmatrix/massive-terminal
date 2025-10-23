@@ -5,13 +5,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use log::{info, trace};
+use log::{info, trace, warn};
 use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
+use url::Url;
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
@@ -333,6 +334,18 @@ impl MassiveTerminal {
             None => match ev.detect_mouse_gesture(MouseButton::Left, min_movement_distance) {
                 // WezTerm reacts on Click, macOS term on Clicked.
                 Some(MouseGesture::Clicked(point)) => {
+                    if let Some(view_px) = window_pos_to_terminal_view(point) {
+                        let geometry = self.presenter.view_geometry();
+                        let cell_pos = geometry.hit_test_cell(view_px);
+                        if let Some(cell) =
+                            geometry.get_cell(cell_pos, self.terminal().lock().screen_mut())
+                            && let Some(hyperlink) = cell.attrs().hyperlink()
+                            && let Err(e) = open_file_http_or_mailto_url(hyperlink.uri())
+                        {
+                            warn!("{e:?}");
+                        }
+                    }
+
                     self.presenter.selection_clear();
                 }
                 Some(MouseGesture::Movement(movement)) => {
@@ -554,4 +567,13 @@ async fn dispatch_output_to_terminal(
     });
 
     Ok(join_handle.await??)
+}
+
+fn open_file_http_or_mailto_url(uri: &str) -> Result<()> {
+    let parsed = Url::parse(uri)?;
+    let scheme = parsed.scheme();
+    match scheme {
+        "https" | "http" | "mailto" | "file" => Ok(opener::open(uri)?),
+        _ => bail!("Unsupported URI scheme: `{scheme}` in `{uri}`"),
+    }
 }
