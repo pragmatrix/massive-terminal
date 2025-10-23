@@ -37,7 +37,9 @@ mod window_geometry;
 mod window_state;
 
 use crate::{
-    logical_line::LogicalLine, terminal::*, window_geometry::WindowGeometry,
+    logical_line::LogicalLine,
+    terminal::*,
+    window_geometry::{PixelPoint, WindowGeometry},
     window_state::WindowState,
 };
 
@@ -216,6 +218,10 @@ impl MassiveTerminal {
 
         pin!(output_dispatcher);
 
+        // Architecture: This is wrong. Need some way to query the current mouse pointer (from the
+        // `WindowState`). Not only from events coming in.
+        let mut mouse_pointer_on_view = None;
+
         loop {
             let shell_event_opt = select! {
                 r = &mut output_dispatcher => {
@@ -237,7 +243,11 @@ impl MassiveTerminal {
             if let Some(shell_event) = &shell_event_opt
                 && let Some(window_event) = shell_event.window_event_for(&self.window)
             {
-                self.process_window_event(self.window.id(), window_event)?;
+                self.process_window_event(
+                    self.window.id(),
+                    window_event,
+                    &mut mouse_pointer_on_view,
+                )?;
             }
 
             // Performance: We begin an update cycle whenever the terminal advances, too. This
@@ -260,7 +270,8 @@ impl MassiveTerminal {
 
             {
                 // Update lines, selection, and cursor.
-                self.presenter.update(&self.window_state, &self.scene)?;
+                self.presenter
+                    .update(&self.window_state, &self.scene, mouse_pointer_on_view)?;
             }
 
             // Center
@@ -302,6 +313,7 @@ impl MassiveTerminal {
         &mut self,
         window_id: WindowId,
         window_event: &WindowEvent,
+        mouse_pointer_on_view: &mut Option<PixelPoint>,
     ) -> Result<()> {
         let min_movement_distance = self.min_pixel_distance_considered_movement();
 
@@ -325,7 +337,7 @@ impl MassiveTerminal {
 
         if let Some(pos) = ev.pos() {
             let mouse_pointer_pos = window_pos_to_terminal_view(pos);
-            self.presenter.set_mouse_pointer_pos(mouse_pointer_pos);
+            *mouse_pointer_on_view = mouse_pointer_pos;
         }
 
         // Process selecting user state

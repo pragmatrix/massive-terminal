@@ -32,13 +32,13 @@ pub struct TerminalPresenter {
     pub terminal: Arc<Mutex<Terminal>>,
 
     scroll_state: ScrollState,
-    /// Position of the mouse pointer in pixel coordinates (so that we can update the cell it's
-    /// pointing to while scrolling).
-    mouse_pointer: Option<PixelPoint>,
 
     selection: Selection,
 
     /// The currently underlined hyperlinked, updated in update based on `mouse_pointer`.
+    ///
+    /// This needs to be stored to update the lines that cover it when its highlighting state
+    /// changes.
     underlined_hyperlink: Option<HighlightedHyperlink>,
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
@@ -60,7 +60,6 @@ impl TerminalPresenter {
             terminal: Mutex::new(terminal).into(),
 
             scroll_state: Default::default(),
-            mouse_pointer: None,
             selection: Default::default(),
 
             underlined_hyperlink: None,
@@ -115,7 +114,14 @@ impl TerminalPresenter {
     ///   Would be equal to physical if the scrollback buffer would be infinite.
     ///
     /// - Visible 0: Top of the screen.
-    pub fn update(&mut self, window_state: &WindowState, scene: &Scene) -> Result<()> {
+    pub fn update(
+        &mut self,
+        window_state: &WindowState,
+        scene: &Scene,
+        // View relative mouse pointer coordinates.
+        // Architecture: Shouldn't this come via `window_state`?
+        mouse_pointer: Option<PixelPoint>,
+    ) -> Result<()> {
         // Currently we need always apply view animations, otherwise the scroll matrix is not
         // in sync with the updated lines which results in flickering while scrolling (i.e.
         // lines disappearing too early when scrolling up).
@@ -147,7 +153,7 @@ impl TerminalPresenter {
         {
             let mut new_hyperlink = None;
             // Architecture: pass mouse pointer pos in update?
-            if let Some(mouse_pointer) = self.mouse_pointer {
+            if let Some(mouse_pointer) = mouse_pointer {
                 let cell_pos = view_geometry.hit_test_cell(mouse_pointer);
                 let cell = view_geometry.get_cell(cell_pos, terminal.screen_mut());
                 new_hyperlink = cell
@@ -369,14 +375,6 @@ impl TerminalPresenter {
                 *view = TerminalView::new(params, alt_screen_active, scene, scroll_offset);
             }
         }
-    }
-}
-
-// Mouse Pointer (for hyperlink highlights)
-
-impl TerminalPresenter {
-    pub fn set_mouse_pointer_pos(&mut self, hit: Option<PixelPoint>) {
-        self.mouse_pointer = hit;
     }
 }
 
