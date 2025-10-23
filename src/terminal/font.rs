@@ -102,7 +102,6 @@ impl TerminalFont {
         let descender_px = cell_pixel_size.1 - ascender_px;
 
         let underline_px = if let Some(underline_metrics) = hb_font.underline_metrics() {
-            println!("underline: {underline_metrics:?}");
             // Precision: Make sure that the underline fits in the cell.
             LineMetrics {
                 position: ((glyph_height_em as i32 + underline_metrics.position as i32) as f32
