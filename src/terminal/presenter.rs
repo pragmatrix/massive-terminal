@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
 use derive_more::Debug;
-use log::{debug, info};
+use log::{debug, info, trace};
 
 use massive_animation::TimeScale;
 use parking_lot::Mutex;
@@ -37,8 +37,8 @@ pub struct TerminalPresenter {
 
     selection: Selection,
 
-    /// The currently highlighted hyper, refreshed in update.
-    highlighted_hyperlink: Option<HighlightedHyperlink>,
+    /// The currently underlined hyperlinked, updated in update based on `mouse_pointer`.
+    underlined_hyperlink: Option<HighlightedHyperlink>,
     pub last_rendered_seq_no: SequenceNo,
     temporary_line_buf: Vec<Line>,
 
@@ -62,7 +62,7 @@ impl TerminalPresenter {
             mouse_pointer: None,
             selection: Default::default(),
 
-            highlighted_hyperlink: None,
+            underlined_hyperlink: None,
             last_rendered_seq_no,
             temporary_line_buf: Vec::new(),
 
@@ -162,15 +162,15 @@ impl TerminalPresenter {
 
             let screen = terminal.screen();
 
-            if self.highlighted_hyperlink != new_hyperlink {
-                if let Some(hyperlink) = &self.highlighted_hyperlink {
+            if self.underlined_hyperlink != new_hyperlink {
+                if let Some(hyperlink) = &self.underlined_hyperlink {
                     hyperlink_changed_lines.add_range(hyperlink.find_coverage(screen));
                 }
                 if let Some(hyperlink) = &new_hyperlink {
                     hyperlink_changed_lines.add_range(hyperlink.find_coverage(screen));
                 }
 
-                self.highlighted_hyperlink = new_hyperlink;
+                self.underlined_hyperlink = new_hyperlink;
             }
         }
 
@@ -242,6 +242,8 @@ impl TerminalPresenter {
             lines_requested
         };
 
+        trace!("Updating lines: {terminal_lines_requested:?}");
+
         for stable_range in terminal_lines_requested.iter() {
             // Detail: This function returns bogus (wraps) if stable range is out of range, so we
             // must be sure to not request lines outside of the stable bounds.
@@ -266,6 +268,8 @@ impl TerminalPresenter {
         // changes can be pushed to it as fast as possible.
         drop(terminal);
 
+        let hyperlink = self.underlined_hyperlink.as_ref().map(|h| &h.hyperlink);
+
         // Push the lines to the view.
         {
             let mut lines_index = 0;
@@ -275,6 +279,7 @@ impl TerminalPresenter {
                 view_update.lines(
                     stable_range.start,
                     &self.temporary_line_buf[lines_index.with_len(lines_count)],
+                    hyperlink,
                 )?;
 
                 lines_index += lines_count;
@@ -291,7 +296,7 @@ impl TerminalPresenter {
                         .resize_with(len, || Line::new(current_seq_no));
                 }
 
-                view_update.lines(stable_range.start, &self.temporary_line_buf[0..len])?;
+                view_update.lines(stable_range.start, &self.temporary_line_buf[0..len], None)?;
             }
             self.temporary_line_buf.clear();
         }
@@ -547,7 +552,7 @@ impl ScreenGeometry {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct HighlightedHyperlink {
+pub struct HighlightedHyperlink {
     hyperlink: Arc<Hyperlink>,
     row: StableRowIndex,
 }

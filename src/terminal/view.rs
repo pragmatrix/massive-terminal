@@ -19,7 +19,7 @@ use termwiz::{
     surface::{CursorShape, CursorVisibility},
 };
 use wezterm_term::{
-    CursorPosition, Intensity, Line, StableRowIndex, Underline, color::ColorPalette,
+    CursorPosition, Hyperlink, Intensity, Line, StableRowIndex, Underline, color::ColorPalette,
 };
 
 use super::TerminalGeometry;
@@ -258,8 +258,8 @@ impl TerminalView {
     }
 
     fn end_update(&mut self) {
-        // Because the cursor does not leave the visible part (I hope), we ignore it for now (its
-        // matrix can be recreated any time).
+        // Because the cursor does not leave the visible part (I hope), we ignore that for now
+        // because its matrix can be recreated any time.
         let mut visuals_range = self.first_line_stable_index.with_len(self.lines.len());
         if let Some(selection) = &self.selection {
             // Review: Unioning the selection can have a nasty large range extension, which needs
@@ -283,8 +283,14 @@ impl Drop for ViewUpdate<'_> {
 }
 
 impl ViewUpdate<'_> {
-    pub fn lines(&mut self, first_line_stable_index: StableRowIndex, lines: &[Line]) -> Result<()> {
-        self.view.update_lines(first_line_stable_index, lines)
+    pub fn lines(
+        &mut self,
+        first_line_stable_index: StableRowIndex,
+        lines: &[Line],
+        underlined_hyperlink: Option<&Arc<Hyperlink>>,
+    ) -> Result<()> {
+        self.view
+            .update_lines(first_line_stable_index, lines, underlined_hyperlink)
     }
 
     pub fn cursor(&mut self, pos: CursorPosition, stable: StableRowIndex, window_focused: bool) {
@@ -398,6 +404,7 @@ impl TerminalView {
         &mut self,
         first_line_stable_index: StableRowIndex,
         lines: &[Line],
+        underlined_hyperlink: Option<&Arc<Hyperlink>>,
     ) -> Result<()> {
         let update_range = first_line_stable_index.with_len(lines.len());
         let lines_range = self.first_line_stable_index.with_len(self.lines.len());
@@ -414,7 +421,7 @@ impl TerminalView {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
                 let mut font_system = self.params.font_system.lock().unwrap();
-                self.line_to_shapes(&mut font_system, top, line)?
+                self.line_to_shapes(&mut font_system, top, line, underlined_hyperlink)?
             };
 
             let line_visuals = &mut self.lines[line_index];
@@ -436,6 +443,7 @@ impl TerminalView {
         font_system: &mut FontSystem,
         top: i64,
         line: &Line,
+        active_hyperlink: Option<&Arc<Hyperlink>>,
     ) -> Result<(Vec<Shape>, Vec<Shape>)> {
         // Production: Add bidi support
         let clusters = line.cluster(None);
@@ -460,8 +468,16 @@ impl TerminalView {
             let background =
                 Self::cluster_background(&cluster, self.font(), &self.color_palette, (left, top));
 
-            let overlay =
-                Self::cluster_overlay(&cluster, self.font(), &self.color_palette, (left, top));
+            let underline_hyperlink =
+                active_hyperlink.is_some() && cluster.attrs.hyperlink() == active_hyperlink;
+
+            let overlay = Self::cluster_overlay(
+                &cluster,
+                self.font(),
+                &self.color_palette,
+                (left, top),
+                underline_hyperlink,
+            );
 
             if let Some(run) = run {
                 left += cluster.width as i64 * self.font().cell_size_px().0 as i64;
@@ -607,15 +623,18 @@ impl TerminalView {
     }
 
     /// Generates overlay shape for the cluster.
+    ///
+    /// This includes underlines, etc.
     fn cluster_overlay(
         cluster: &CellCluster,
         font: &TerminalFont,
         color_palette: &ColorPalette,
         (left, top): (i64, i64),
+        underline_hyperlink: bool,
     ) -> Option<Shape> {
         let underline = cluster.attrs.underline();
         // Feature: Don't highlight if the hyperlink is not hovered over.
-        let effective_underline = match (cluster.attrs.hyperlink().is_some(), underline) {
+        let effective_underline = match (underline_hyperlink, underline) {
             (true, Underline::None) => Underline::Single,
             (true, Underline::Single) => Underline::Double,
             (true, _) => Underline::Single,
