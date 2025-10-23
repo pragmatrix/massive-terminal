@@ -35,6 +35,7 @@ euclid.workspace = true
 futures.workspace = true
 log.workspace = true
 num.workspace = true
+opener.workspace = true # For opening hyperlinks
 parking_lot.workspace = true
 portable-pty.workspace = true
 rangeset.workspace = true
@@ -44,6 +45,7 @@ tokio-util.workspace = true
 tokio.workspace = true
 # tracing.workspace = true
 tuple.workspace = true
+url.workspace = true # For parsing urls before opening them.
 winit.workspace = true # Ergonomics: Get rid of the winit dependency. Used for because of LogicalSize.
 
 [workspace.dependencies]
@@ -70,6 +72,7 @@ flo_curves = "0.8.0"
 futures = { version = "0.3.30" }
 itertools = "0.14.0"
 log = "0.4.19"
+opener = "0.8.3"
 parking_lot = { version = "0.12.4" }
 serde = { version = "1.0.164", features = ["derive"] }
 serde_tuple = "1.1.2"

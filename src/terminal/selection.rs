@@ -6,7 +6,7 @@ use wezterm_term::StableRowIndex;
 
 use crate::{
     range_ops::RangeOps,
-    terminal::CellHit,
+    terminal::CellPos,
     window_geometry::{CellPoint, PixelPoint},
 };
 
@@ -98,8 +98,8 @@ impl PartialOrd for SelectionPos {
     }
 }
 
-impl From<CellHit> for SelectionPos {
-    fn from(value: CellHit) -> Self {
+impl From<CellPos> for SelectionPos {
+    fn from(value: CellPos) -> Self {
         SelectionPos::new(value.column.max(0).cast_unsigned(), value.row)
     }
 }

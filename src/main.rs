@@ -5,17 +5,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use log::{info, trace};
+use log::{info, trace, warn};
 use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
+use url::Url;
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
-    window::WindowId,
+    window::{CursorIcon, WindowId},
 };
 
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
@@ -36,7 +37,9 @@ mod window_geometry;
 mod window_state;
 
 use crate::{
-    logical_line::LogicalLine, terminal::*, window_geometry::WindowGeometry,
+    logical_line::LogicalLine,
+    terminal::*,
+    window_geometry::{PixelPoint, WindowGeometry},
     window_state::WindowState,
 };
 
@@ -215,6 +218,10 @@ impl MassiveTerminal {
 
         pin!(output_dispatcher);
 
+        // Architecture: This is wrong. Need some way to query the current mouse pointer (from the
+        // `WindowState`). Not only from events coming in.
+        let mut mouse_pointer_on_view = None;
+
         loop {
             let shell_event_opt = select! {
                 r = &mut output_dispatcher => {
@@ -236,7 +243,11 @@ impl MassiveTerminal {
             if let Some(shell_event) = &shell_event_opt
                 && let Some(window_event) = shell_event.window_event_for(&self.window)
             {
-                self.process_window_event(self.window.id(), window_event)?;
+                self.process_window_event(
+                    self.window.id(),
+                    window_event,
+                    &mut mouse_pointer_on_view,
+                )?;
             }
 
             // Performance: We begin an update cycle whenever the terminal advances, too. This
@@ -258,9 +269,9 @@ impl MassiveTerminal {
             }
 
             {
-                // Update lines & cursor.
-
-                self.presenter.update(&self.window_state, &self.scene)?;
+                // Update lines, selection, and cursor.
+                self.presenter
+                    .update(&self.window_state, &self.scene, mouse_pointer_on_view)?;
             }
 
             // Center
@@ -280,6 +291,17 @@ impl MassiveTerminal {
 
                 self.view_matrix.update_if_changed(center_transform);
             }
+
+            // Update mouse cursor shape.
+
+            {
+                let cursor_icon = if self.presenter.is_hyperlink_underlined_under_mouse() {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                };
+                self.window.set_cursor(cursor_icon);
+            }
         }
 
         // Ok(())
@@ -291,6 +313,7 @@ impl MassiveTerminal {
         &mut self,
         window_id: WindowId,
         window_event: &WindowEvent,
+        mouse_pointer_on_view: &mut Option<PixelPoint>,
     ) -> Result<()> {
         let min_movement_distance = self.min_pixel_distance_considered_movement();
 
@@ -303,23 +326,42 @@ impl MassiveTerminal {
 
         let modifiers = ev.states().keyboard_modifiers();
 
-        // Process selecting user state
-
-        let hit_view_matrix = |p| {
+        let window_pos_to_terminal_view = |p| {
             self.renderer
                 .geometry()
                 .unproject_to_model_z0(p, &self.view_matrix.value())
                 .map(|p| (p.x, p.y).into())
         };
 
+        // Process mouse pointer
+
+        if let Some(pos) = ev.pos() {
+            let mouse_pointer_pos = window_pos_to_terminal_view(pos);
+            *mouse_pointer_on_view = mouse_pointer_pos;
+        }
+
+        // Process selecting user state
+
         match &mut self.selecting {
             None => match ev.detect_mouse_gesture(MouseButton::Left, min_movement_distance) {
                 // WezTerm reacts on Click, macOS term on Clicked.
-                Some(MouseGesture::Clicked(..)) => {
+                Some(MouseGesture::Clicked(point)) => {
+                    if let Some(view_px) = window_pos_to_terminal_view(point) {
+                        let geometry = self.presenter.view_geometry();
+                        let cell_pos = geometry.hit_test_cell(view_px);
+                        if let Some(cell) =
+                            geometry.get_cell(cell_pos, self.terminal().lock().screen_mut())
+                            && let Some(hyperlink) = cell.attrs().hyperlink()
+                            && let Err(e) = open_file_http_or_mailto_url(hyperlink.uri())
+                        {
+                            warn!("{e:?}");
+                        }
+                    }
+
                     self.presenter.selection_clear();
                 }
                 Some(MouseGesture::Movement(movement)) => {
-                    if let Some(hit) = hit_view_matrix(movement.from) {
+                    if let Some(hit) = window_pos_to_terminal_view(movement.from) {
                         self.presenter.selection_begin(hit);
                         self.selecting = Some(movement);
                     }
@@ -328,7 +370,7 @@ impl MassiveTerminal {
             },
             Some(movement) => {
                 if let Some(progress) = movement.track_to(&ev) {
-                    let progress = progress.map_or_cancel(hit_view_matrix);
+                    let progress = progress.map_or_cancel(window_pos_to_terminal_view);
 
                     assert!(self.presenter.selection_can_progress());
                     self.presenter.selection_progress(&self.scene, progress);
@@ -537,4 +579,13 @@ async fn dispatch_output_to_terminal(
     });
 
     Ok(join_handle.await??)
+}
+
+fn open_file_http_or_mailto_url(uri: &str) -> Result<()> {
+    let parsed = Url::parse(uri)?;
+    let scheme = parsed.scheme();
+    match scheme {
+        "https" | "http" | "mailto" | "file" => Ok(opener::open(uri)?),
+        _ => bail!("Unsupported URI scheme: `{scheme}` in `{uri}`"),
+    }
 }
