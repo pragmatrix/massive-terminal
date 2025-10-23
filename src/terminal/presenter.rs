@@ -70,6 +70,10 @@ impl TerminalPresenter {
         }
     }
 
+    pub fn is_hyperlink_underlined_under_mouse(&self) -> bool {
+        self.underlined_hyperlink.is_some()
+    }
+
     pub fn geometry(&self) -> &TerminalGeometry {
         &self.geometry
     }

@@ -15,7 +15,7 @@ use tokio::{pin, select, sync::Notify, task};
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
-    window::WindowId,
+    window::{CursorIcon, WindowId},
 };
 
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
@@ -278,6 +278,17 @@ impl MassiveTerminal {
                 };
 
                 self.view_matrix.update_if_changed(center_transform);
+            }
+
+            // Update mouse cursor shape.
+
+            {
+                let cursor_icon = if self.presenter.is_hyperlink_underlined_under_mouse() {
+                    CursorIcon::Pointer
+                } else {
+                    CursorIcon::Default
+                };
+                self.window.set_cursor(cursor_icon);
             }
         }
 
