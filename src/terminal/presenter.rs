@@ -35,7 +35,7 @@ pub struct TerminalPresenter {
 
     selection: Selection,
 
-    /// The currently underlined hyperlinked, updated in update based on `mouse_pointer`.
+    /// The currently underlined hyperlink, updated in update based on `mouse_pointer`.
     ///
     /// This needs to be stored to update the lines that cover it when its highlighting state
     /// changes.
