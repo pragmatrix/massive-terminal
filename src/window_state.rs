@@ -1,5 +1,4 @@
 use derive_more::Deref;
-use winit::window::CursorIcon;
 
 use crate::window_geometry::WindowGeometry;
 

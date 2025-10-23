@@ -1,11 +1,13 @@
 #![allow(unused)]
 use std::ops::Range;
 
-use wezterm_term::StableRowIndex;
+use wezterm_term::{Cell, Screen, StableRowIndex};
 
 use crate::{
     range_ops::WithLength,
-    terminal::{NormalizedSelectionRange, Selection, SelectionRange, TerminalGeometry},
+    terminal::{
+        NormalizedSelectionRange, ScreenGeometry, Selection, SelectionRange, TerminalGeometry,
+    },
     window_geometry::PixelPoint,
 };
 
@@ -59,7 +61,7 @@ impl ViewGeometry {
     }
 
     /// Hit tests a pixel point on the view resulting in a column and a row.
-    pub fn hit_test_cell(&self, view_px: PixelPoint) -> CellHit {
+    pub fn hit_test_cell(&self, view_px: PixelPoint) -> CellPos {
         let (x, mut y) = view_px.into();
 
         let column = (x / self.terminal.cell_size_px.0 as f64).floor() as isize;
@@ -67,16 +69,31 @@ impl ViewGeometry {
         y -= self.stable_range_ascend_px as f64;
         let row = (y / self.terminal.cell_size_px.1 as f64).floor() as isize;
 
-        CellHit {
+        CellPos {
             column,
             row: row + self.stable_range.start,
         }
     }
+
+    pub fn get_cell<'s>(&self, cell: CellPos, screen: &'s mut Screen) -> Option<&'s Cell> {
+        let screen_geometry = ScreenGeometry::new(screen);
+        // Visible on our view.
+        if self.stable_range.contains(&cell.row) && cell.column >= 0 {
+            let visible_y = cell.row - screen_geometry.visible_range.start;
+            return screen
+                // Correctness: Does this actually hit on the column, may need to use visible_cells in Line instead?
+                .get_cell(cell.column.cast_unsigned(), visible_y as i64);
+        }
+
+        None
+    }
 }
 
-/// A hit on a cell. Both values might be outside of the view's visibility or range.
-#[derive(Debug)]
-pub struct CellHit {
+/// A cell position.
+///
+/// Both values might be outside of the view's visibility or range.
+#[derive(Debug, Copy, Clone)]
+pub struct CellPos {
     pub column: isize,
     pub row: StableRowIndex,
 }

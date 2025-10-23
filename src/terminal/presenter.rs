@@ -14,7 +14,8 @@ use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
     terminal::{
-        NormalizedSelectionRange, Selection, TerminalGeometry, TerminalViewParams, ViewGeometry,
+        NormalizedSelectionRange, ScreenGeometry, Selection, TerminalGeometry, TerminalViewParams,
+        ViewGeometry,
     },
     window_geometry::PixelPoint,
 };
@@ -145,33 +146,26 @@ impl TerminalPresenter {
 
         {
             let mut new_hyperlink = None;
+            // Architecture: pass mouse pointer pos in update?
             if let Some(mouse_pointer) = self.mouse_pointer {
-                let cell_hit = view_geometry.hit_test_cell(mouse_pointer);
-                // Visible on our view.
-                if view_geometry.stable_range.contains(&cell_hit.row) && cell_hit.column >= 0 {
-                    let visible_y = cell_hit.row - screen_geometry.visible_range.start;
-                    if let Some(cell) = terminal
-                        .screen_mut()
-                        .get_cell(cell_hit.column.cast_unsigned(), visible_y as i64)
-                    {
-                        new_hyperlink = cell.attrs().hyperlink().cloned().map(|hyperlink| {
-                            HighlightedHyperlink {
-                                hyperlink,
-                                row: cell_hit.row,
-                            }
-                        });
-                    }
-                }
+                let cell_pos = view_geometry.hit_test_cell(mouse_pointer);
+                let cell = view_geometry.get_cell(cell_pos, terminal.screen_mut());
+                new_hyperlink = cell
+                    .and_then(|cell| cell.attrs().hyperlink())
+                    .map(|hyperlink| HighlightedHyperlink {
+                        hyperlink: hyperlink.clone(),
+                        row: cell_pos.row,
+                    });
             }
 
             let screen = terminal.screen();
 
             if self.underlined_hyperlink != new_hyperlink {
                 if let Some(hyperlink) = &self.underlined_hyperlink {
-                    hyperlink_changed_lines.add_range(hyperlink.find_coverage(screen));
+                    hyperlink_changed_lines.add_range(hyperlink.line_coverage(screen));
                 }
                 if let Some(hyperlink) = &new_hyperlink {
-                    hyperlink_changed_lines.add_range(hyperlink.find_coverage(screen));
+                    hyperlink_changed_lines.add_range(hyperlink.line_coverage(screen));
                 }
 
                 self.underlined_hyperlink = new_hyperlink;
@@ -381,7 +375,7 @@ impl TerminalPresenter {
 // Mouse Pointer (for hyperlink highlights)
 
 impl TerminalPresenter {
-    pub fn set_mouse_pointer(&mut self, hit: Option<PixelPoint>) {
+    pub fn set_mouse_pointer_pos(&mut self, hit: Option<PixelPoint>) {
         self.mouse_pointer = hit;
     }
 }
@@ -528,33 +522,6 @@ impl ScrollState {
     }
 }
 
-#[derive(Debug)]
-struct ScreenGeometry {
-    // The stable range of the visible part of the terminal.
-    pub visible_range: Range<StableRowIndex>,
-    // The range the terminal has line data for.
-    pub buffer_range: Range<StableRowIndex>,
-    pub columns: usize,
-}
-
-impl ScreenGeometry {
-    pub fn new(screen: &Screen) -> Self {
-        let visible_range = screen
-            .visible_row_to_stable_row(0)
-            .with_len(screen.physical_rows);
-
-        let buffer_range = screen.phys_to_stable_row_index(0).with_len(
-            screen.scrollback_rows(), /* does include the visible part */
-        );
-
-        Self {
-            visible_range,
-            buffer_range,
-            columns: screen.physical_cols,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct HighlightedHyperlink {
     hyperlink: Arc<Hyperlink>,
@@ -562,7 +529,7 @@ pub struct HighlightedHyperlink {
 }
 
 impl HighlightedHyperlink {
-    fn find_coverage(&self, screen: &Screen) -> Range<StableRowIndex> {
+    fn line_coverage(&self, screen: &Screen) -> Range<StableRowIndex> {
         // Performance: We may return only the physical range that actually contain the hyperlink.
 
         let mut range = self.row.with_len(1);

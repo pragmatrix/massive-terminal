@@ -323,8 +323,8 @@ impl MassiveTerminal {
         // Process mouse pointer
 
         if let Some(pos) = ev.pos() {
-            let mouse_pointer = window_pos_to_terminal_view(pos);
-            self.presenter.set_mouse_pointer(mouse_pointer);
+            let mouse_pointer_pos = window_pos_to_terminal_view(pos);
+            self.presenter.set_mouse_pointer_pos(mouse_pointer_pos);
         }
 
         // Process selecting user state
@@ -332,7 +332,7 @@ impl MassiveTerminal {
         match &mut self.selecting {
             None => match ev.detect_mouse_gesture(MouseButton::Left, min_movement_distance) {
                 // WezTerm reacts on Click, macOS term on Clicked.
-                Some(MouseGesture::Clicked(..)) => {
+                Some(MouseGesture::Clicked(point)) => {
                     self.presenter.selection_clear();
                 }
                 Some(MouseGesture::Movement(movement)) => {
