@@ -15,9 +15,7 @@ pub struct ScreenGeometry {
 
 impl ScreenGeometry {
     pub fn new(screen: &Screen) -> Self {
-        let visible_range = screen
-            .visible_row_to_stable_row(0)
-            .with_len(screen.physical_rows);
+        let visible_range = Self::visible_range(screen);
 
         let buffer_range = screen.phys_to_stable_row_index(0).with_len(
             screen.scrollback_rows(), /* does include the visible part */
@@ -28,5 +26,11 @@ impl ScreenGeometry {
             buffer_range,
             columns: screen.physical_cols,
         }
+    }
+
+    pub fn visible_range(screen: &Screen) -> Range<StableRowIndex> {
+        screen
+            .visible_row_to_stable_row(0)
+            .with_len(screen.physical_rows)
     }
 }

@@ -76,10 +76,10 @@ impl ViewGeometry {
     }
 
     pub fn get_cell<'s>(&self, cell: CellPos, screen: &'s mut Screen) -> Option<&'s Cell> {
-        let screen_geometry = ScreenGeometry::new(screen);
+        let visible_start = screen.visible_row_to_stable_row(0);
         // Visible on our view.
         if self.stable_range.contains(&cell.row) && cell.column >= 0 {
-            let visible_y = cell.row - screen_geometry.visible_range.start;
+            let visible_y = cell.row - visible_start;
             return screen
                 // Correctness: Does this actually hit on the column, may need to use visible_cells in Line instead?
                 .get_cell(cell.column.cast_unsigned(), visible_y as i64);
