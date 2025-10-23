@@ -20,7 +20,9 @@ use winit::{
 };
 
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
-use wezterm_term::{KeyCode, KeyModifiers, StableRowIndex, Terminal, TerminalConfiguration, color};
+use wezterm_term::{
+    KeyCode, KeyModifiers, Line, StableRowIndex, Terminal, TerminalConfiguration, color,
+};
 
 use massive_geometry::{Camera, Color, Identity};
 use massive_input::{EventManager, ExternalEvent, MouseGesture, Movement};
@@ -38,6 +40,7 @@ mod window_state;
 
 use crate::{
     logical_line::LogicalLine,
+    range_ops::WithLength,
     terminal::*,
     window_geometry::{PixelPoint, WindowGeometry},
     window_state::WindowState,
@@ -333,11 +336,33 @@ impl MassiveTerminal {
                 .map(|p| (p.x, p.y).into())
         };
 
-        // Process mouse pointer
+        // Process mouse pointer movements
 
         if let Some(pos) = ev.pos() {
             let mouse_pointer_pos = window_pos_to_terminal_view(pos);
             *mouse_pointer_on_view = mouse_pointer_pos;
+
+            // Update hyperlinks.
+            //
+            // Precision: This is asynchronous. The hit pos may be out of range, or somewhere else.
+            // But good enough for now.
+            if let Some(current_mouse_pos) = mouse_pointer_pos {
+                let cell_pos = self
+                    .presenter
+                    .view_geometry()
+                    .hit_test_cell(current_mouse_pos);
+                self.presenter
+                    .terminal
+                    .lock()
+                    .screen_mut()
+                    .for_each_logical_line_in_stable_range_mut(
+                        cell_pos.row.with_len(1),
+                        |_, lines| {
+                            Line::apply_hyperlink_rules(&config::DEFAULT_HYPERLINK_RULES, lines);
+                            true
+                        },
+                    );
+            }
         }
 
         // Process selecting user state
@@ -588,4 +613,27 @@ fn open_file_http_or_mailto_url(uri: &str) -> Result<()> {
         "https" | "http" | "mailto" | "file" => Ok(opener::open(uri)?),
         _ => bail!("Unsupported URI scheme: `{scheme}` in `{uri}`"),
     }
+}
+
+mod config {
+    use std::sync::LazyLock;
+
+    use termwiz::hyperlink::{self, Rule};
+
+    pub static DEFAULT_HYPERLINK_RULES: LazyLock<Vec<Rule>> = LazyLock::new(|| {
+        vec![
+            // First handle URLs wrapped with punctuation (i.e. brackets)
+            // e.g. [http://foo] (http://foo) <http://foo>
+            Rule::with_highlight(r"\((\w+://\S+)\)", "$1", 1).unwrap(),
+            Rule::with_highlight(r"\[(\w+://\S+)\]", "$1", 1).unwrap(),
+            Rule::with_highlight(r"<(\w+://\S+)>", "$1", 1).unwrap(),
+            // Then handle URLs not wrapped in brackets that
+            // 1) have a balanced ending parenthesis or
+            Rule::new(hyperlink::CLOSING_PARENTHESIS_HYPERLINK_PATTERN, "$0").unwrap(),
+            // 2) include terminating _, / or - characters, if any
+            Rule::new(hyperlink::GENERIC_HYPERLINK_PATTERN, "$0").unwrap(),
+            // implicit mailto link
+            Rule::new(r"\b\w+@[\w-]+(\.[\w-]+)+\b", "mailto:$0").unwrap(),
+        ]
+    });
 }
