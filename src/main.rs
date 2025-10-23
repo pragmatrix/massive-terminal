@@ -342,7 +342,7 @@ impl MassiveTerminal {
             let mouse_pointer_pos = window_pos_to_terminal_view(pos);
             *mouse_pointer_on_view = mouse_pointer_pos;
 
-            // Update hyperlinks.
+            // Refresh implicit hyperlinks.
             //
             // Precision: This is asynchronous. The hit pos may be out of range, or somewhere else.
             // But good enough for now.
