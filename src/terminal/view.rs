@@ -19,7 +19,8 @@ use termwiz::{
     surface::{CursorShape, CursorVisibility},
 };
 use wezterm_term::{
-    CursorPosition, Hyperlink, Intensity, Line, StableRowIndex, Underline, color::ColorPalette,
+    CellAttributes, CursorPosition, Hyperlink, Intensity, Line, StableRowIndex, Underline,
+    color::ColorPalette,
 };
 
 use super::TerminalGeometry;
@@ -32,7 +33,7 @@ use crate::{
     window_geometry::CellRect,
 };
 use massive_animation::{Animated, Interpolation};
-use massive_geometry::{Point, Rect, Size};
+use massive_geometry::{Color, Point, Rect, Size};
 use massive_scene::{Handle, Location, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 use massive_shell::Scene;
@@ -252,9 +253,17 @@ impl TerminalView {
         &'a mut self,
         scene: &'a Scene,
         view_range: Range<StableRowIndex>,
+        reverse_video: bool,
     ) -> (ViewUpdate<'a>, RangeSet<StableRowIndex>) {
         let additional_lines_needed = self.update_view_range(scene, view_range);
-        (ViewUpdate { scene, view: self }, additional_lines_needed)
+        (
+            ViewUpdate {
+                scene,
+                view: self,
+                reverse_video,
+            },
+            additional_lines_needed,
+        )
     }
 
     fn end_update(&mut self) {
@@ -274,6 +283,7 @@ impl TerminalView {
 pub struct ViewUpdate<'a> {
     pub scene: &'a Scene,
     view: &'a mut TerminalView,
+    reverse_video: bool,
 }
 
 impl Drop for ViewUpdate<'_> {
@@ -289,8 +299,12 @@ impl ViewUpdate<'_> {
         lines: &[Line],
         underlined_hyperlink: Option<&Arc<Hyperlink>>,
     ) -> Result<()> {
-        self.view
-            .update_lines(first_line_stable_index, lines, underlined_hyperlink)
+        self.view.update_lines(
+            first_line_stable_index,
+            lines,
+            underlined_hyperlink,
+            self.reverse_video,
+        )
     }
 
     pub fn cursor(&mut self, pos: CursorPosition, stable: StableRowIndex, window_focused: bool) {
@@ -405,6 +419,7 @@ impl TerminalView {
         first_line_stable_index: StableRowIndex,
         lines: &[Line],
         underlined_hyperlink: Option<&Arc<Hyperlink>>,
+        reverse_video: bool,
     ) -> Result<()> {
         let update_range = first_line_stable_index.with_len(lines.len());
         let lines_range = self.first_line_stable_index.with_len(self.lines.len());
@@ -421,7 +436,13 @@ impl TerminalView {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
                 let mut font_system = self.params.font_system.lock().unwrap();
-                self.line_to_shapes(&mut font_system, top, line, underlined_hyperlink)?
+                self.create_line_shapes(
+                    &mut font_system,
+                    top,
+                    line,
+                    underlined_hyperlink,
+                    reverse_video,
+                )?
             };
 
             let line_visuals = &mut self.lines[line_index];
@@ -438,12 +459,13 @@ impl TerminalView {
         Ok(())
     }
 
-    fn line_to_shapes(
+    fn create_line_shapes(
         &self,
         font_system: &mut FontSystem,
         top: i64,
         line: &Line,
         active_hyperlink: Option<&Arc<Hyperlink>>,
+        reverse_video: bool,
     ) -> Result<(Vec<Shape>, Vec<Shape>)> {
         // Production: Add bidi support
         let clusters = line.cluster(None);
@@ -457,13 +479,11 @@ impl TerminalView {
         // Optimization: Combine clusters with compatible attributes. Colors and widths can vary
         // inside a GlyphRun.
         for cluster in clusters {
-            let run = Self::cluster_to_run(
-                font_system,
-                self.font(),
-                &self.color_palette,
-                (left, top),
-                &cluster,
-            )?;
+            let attributes =
+                AttributeResolver::new(&self.color_palette, reverse_video, &cluster.attrs);
+
+            let run =
+                Self::cluster_to_run(font_system, self.font(), &attributes, (left, top), &cluster)?;
 
             let background =
                 Self::cluster_background(&cluster, self.font(), &self.color_palette, (left, top));
@@ -471,10 +491,10 @@ impl TerminalView {
             let underline_hyperlink =
                 active_hyperlink.is_some() && cluster.attrs.hyperlink() == active_hyperlink;
 
-            let overlay = Self::cluster_overlay(
+            let overlay = Self::cluster_decorations(
                 &cluster,
                 self.font(),
-                &self.color_palette,
+                &attributes,
                 (left, top),
                 underline_hyperlink,
             );
@@ -499,12 +519,10 @@ impl TerminalView {
     fn cluster_to_run(
         font_system: &mut FontSystem,
         font: &TerminalFont,
-        color_palette: &ColorPalette,
+        attributes: &AttributeResolver,
         (left, top): (i64, i64),
         cluster: &CellCluster,
     ) -> Result<Option<GlyphRun>> {
-        let attributes = &cluster.attrs;
-
         // Performance: BufferLine makes a copy of the text, is there a better way?
         // Architecture: Should we shape all clusters in one co and prepare Attrs::metadata() accordingly?
         // Architecture: Under the hood, rustybuzz is used for text shaping, use it directly?
@@ -570,15 +588,6 @@ impl TerminalView {
             glyphs.push(glyph);
         }
 
-        // Precision: Clarify what color profile we are actually using and document this in the massive Color.
-        let fg_color = color_palette.resolve_fg(attributes.foreground());
-        // Feature: Support a base weight.
-        let weight = match attributes.intensity() {
-            Intensity::Half => TextWeight::LIGHT,
-            Intensity::Normal => TextWeight::NORMAL,
-            Intensity::Bold => TextWeight::BOLD,
-        };
-
         let run = GlyphRun {
             translation: (left as _, top as _, 0.).into(),
             metrics: GlyphRunMetrics {
@@ -588,8 +597,8 @@ impl TerminalView {
                 max_descent: font.descender_px,
                 width: (cell_width * font.glyph_advance_px),
             },
-            text_color: color::from_srgba(fg_color),
-            text_weight: weight,
+            text_color: attributes.foreground_color,
+            text_weight: attributes.text_weight(),
             glyphs,
         };
 
@@ -622,13 +631,13 @@ impl TerminalView {
         Some(massive_shapes::Rect::new(Rect::new(lt, size), background_color).into())
     }
 
-    /// Generates overlay shape for the cluster.
+    /// Generates the decoration shape for the cluster.
     ///
     /// This includes underlines, etc.
-    fn cluster_overlay(
+    fn cluster_decorations(
         cluster: &CellCluster,
         font: &TerminalFont,
-        color_palette: &ColorPalette,
+        attributes: &AttributeResolver,
         (left, top): (i64, i64),
         underline_hyperlink: bool,
     ) -> Option<Shape> {
@@ -667,13 +676,9 @@ impl TerminalView {
             )
                 .into();
 
-            let mut color = cluster.attrs.underline_color();
-            if color == ColorAttribute::Default {
-                color = cluster.attrs.foreground()
-            }
-            let color = color::from_srgba(color_palette.resolve_fg(color));
-
-            return Some(massive_shapes::Rect::new(Rect::new(lt, size), color).into());
+            return Some(
+                massive_shapes::Rect::new(Rect::new(lt, size), attributes.underline_color()).into(),
+            );
         }
 
         None
@@ -863,10 +868,58 @@ impl TerminalView {
     }
 }
 
+#[derive(Debug)]
+struct AttributeResolver<'a> {
+    palette: &'a ColorPalette,
+    pub attributes: &'a CellAttributes,
+    foreground_color: Color,
+    background_color: Color,
+}
+
+impl<'a> AttributeResolver<'a> {
+    pub fn new(palette: &'a ColorPalette, reverse_video: bool, attrs: &'a CellAttributes) -> Self {
+        // Precompute the ones we use multiple times.
+
+        let foreground = color::from_srgba(palette.resolve_fg(attrs.foreground()));
+        let background = color::from_srgba(palette.resolve_bg(attrs.background()));
+
+        let (foreground, background) = if attrs.reverse() != reverse_video {
+            (background, foreground)
+        } else {
+            (foreground, background)
+        };
+
+        Self {
+            palette,
+            attributes: attrs,
+            foreground_color: foreground,
+            background_color: background,
+        }
+    }
+
+    pub fn underline_color(&self) -> Color {
+        let color = self.attributes.underline_color();
+        if color == ColorAttribute::Default {
+            return self.foreground_color;
+        }
+        // Resolving fg / bg behaves the same if the color is not the default.
+        color::from_srgba(self.palette.resolve_fg(color))
+    }
+
+    pub fn text_weight(&self) -> TextWeight {
+        match self.attributes.intensity() {
+            Intensity::Half => TextWeight::LIGHT,
+            Intensity::Normal => TextWeight::NORMAL,
+            Intensity::Bold => TextWeight::BOLD,
+        }
+    }
+}
+
 mod color {
     use massive_geometry::Color;
     use termwiz::color::SrgbaTuple;
 
+    // Precision: Clarify what color profile we are actually using and document this in the massive Color.
     pub fn from_srgba(SrgbaTuple(r, g, b, a): SrgbaTuple) -> Color {
         (r, g, b, a).into()
     }
