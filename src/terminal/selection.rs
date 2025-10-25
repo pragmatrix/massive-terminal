@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, ops::Range};
 
 use derive_more::Deref;
-use log::error;
+use log::{error, warn};
 use wezterm_term::StableRowIndex;
 
 use crate::{
@@ -38,7 +38,8 @@ impl Selection {
         matches!(self, Self::Begun { .. } | Self::Selecting { .. })
     }
 
-    pub fn progress(&mut self, end: PixelPoint) {
+    #[must_use]
+    pub fn progress(&mut self, end: PixelPoint) -> bool {
         *self = match &self {
             Self::Begun { pos } => Self::Selecting {
                 from: *pos,
@@ -49,13 +50,13 @@ impl Selection {
                 to: end,
             },
             _ => {
-                error!(
-                    "Internal error: Selection is progressing, but state is {:?}",
-                    self
-                );
+                // This happens when the selection is cleared, but clients continue to progress.
+                warn!("Selection is progressing, but state is {:?}", self);
                 Self::Unselected
             }
         };
+
+        self.can_progress()
     }
 
     /// Ends the selection and returns the pixel point the cursor was last at.

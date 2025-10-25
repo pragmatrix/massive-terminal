@@ -31,6 +31,8 @@ pub struct TerminalPresenter {
     #[debug(skip)]
     pub terminal: Arc<Mutex<Terminal>>,
 
+    // Architecture: We might need to move selection and scroll state to the view, to keep the alt
+    // screen completely separate? Look at the code that resets both when the view.
     scroll_state: ScrollState,
 
     selection: Selection,
@@ -132,7 +134,10 @@ impl TerminalPresenter {
 
         let mut terminal = self.terminal.lock();
 
-        Self::sync_alt_screen(&terminal, &mut self.view, scene);
+        if Self::sync_alt_screen(&terminal, &mut self.view, scene) {
+            self.selection = Selection::Unselected;
+            self.scroll_state = ScrollState::Auto;
+        }
 
         // Performance: May be there is need to lock the terminal if there are no visible changes
         let current_seq_no = terminal.current_seqno();
@@ -355,29 +360,31 @@ impl TerminalPresenter {
         Ok(())
     }
 
-    fn sync_alt_screen(terminal: &Terminal, view: &mut TerminalView, scene: &Scene) {
+    // Returns true if the terminal view was changed.
+    fn sync_alt_screen(terminal: &Terminal, view: &mut TerminalView, scene: &Scene) -> bool {
         // Switch between primary and alt screen.
         //
         // Architecture: If we do switch here, we overwrite all scrolling / apply animations done
         // above, this seems broken. I.e. animations do not need to be applied in this case.
         // And what if scrolling later interferes with a switch?
-        {
-            let alt_screen_active = terminal.is_alt_screen_active();
-            if alt_screen_active != view.alt_screen {
-                // Switch
-                let scroll_offset = terminal.screen().visible_row_to_stable_row(0);
-                info!(
-                    "Switching to {} view at scroll offset {scroll_offset}",
-                    if alt_screen_active {
-                        "alternate"
-                    } else {
-                        "primary"
-                    }
-                );
-                let params = view.params.clone();
-                *view = TerminalView::new(params, alt_screen_active, scene, scroll_offset);
-            }
+        let alt_screen_active = terminal.is_alt_screen_active();
+        if alt_screen_active == view.alt_screen {
+            return false;
         }
+
+        // Switch
+        let scroll_offset = terminal.screen().visible_row_to_stable_row(0);
+        info!(
+            "Switching to {} view at scroll offset {scroll_offset}",
+            if alt_screen_active {
+                "alternate"
+            } else {
+                "primary"
+            }
+        );
+        let params = view.params.clone();
+        *view = TerminalView::new(params, alt_screen_active, scene, scroll_offset);
+        true
     }
 }
 
@@ -395,14 +402,14 @@ impl TerminalPresenter {
         self.selection.reset();
     }
 
-    pub fn selection_can_progress(&self) -> bool {
-        self.selection.can_progress()
-    }
-
     const PIXEL_TO_SCROLL_VELOCITY_PER_SECOND: f64 = 16.0;
 
-    pub fn selection_progress(&mut self, scene: &Scene, progress: Progress<PixelPoint>) {
-        match progress {
+    pub fn selection_progress(&mut self, scene: &Scene, progress: Progress<PixelPoint>) -> bool {
+        if !self.selection.can_progress() {
+            return false;
+        }
+
+        let cont = match progress {
             Progress::Proceed(view_hit) => {
                 // Scroll?
                 let pixel_velocity = self.geometry().scroll_distance_px(view_hit);
@@ -415,7 +422,7 @@ impl TerminalPresenter {
                     self.clear_selection_scroller()
                 }
 
-                self.selection.progress(view_hit);
+                self.selection.progress(view_hit)
             }
             Progress::Commit => {
                 self.clear_selection_scroller();
@@ -423,12 +430,17 @@ impl TerminalPresenter {
                     let pos = self.view_geometry().hit_test_cell(end);
                     self.selection.end(pos.into())
                 }
+                true
             }
-            Progress::Cancel => {
-                self.clear_selection_scroller();
-                self.selection.reset()
-            }
+            Progress::Cancel => false,
+        };
+
+        if !cont {
+            self.clear_selection_scroller();
+            self.selection.reset()
         }
+
+        cont
     }
 
     pub fn selection_range(&self) -> Option<NormalizedSelectionRange> {
