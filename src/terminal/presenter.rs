@@ -204,8 +204,11 @@ impl TerminalPresenter {
 
         // Set up the lines to update with the ones the view requests explicitly (For example caused
         // through scrolling).
-        let (mut view_update, mut lines_requested) =
-            view.begin_update(scene, view_visible_range.clone());
+        let (mut view_update, mut lines_requested) = view.begin_update(
+            scene,
+            view_visible_range.clone(),
+            terminal.get_reverse_video(),
+        );
 
         // Add the hyperlink changed lines first.
         lines_requested.add_set(&hyperlink_changed_lines);
