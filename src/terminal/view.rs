@@ -871,7 +871,7 @@ struct AttributeResolver<'a> {
     palette: &'a ColorPalette,
     pub attributes: &'a CellAttributes,
     foreground_color: Color,
-    // `None` don't render background.
+    // `None` indicates no background rendering.
     background_color: Option<Color>,
 }
 
