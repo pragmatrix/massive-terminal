@@ -486,7 +486,7 @@ impl TerminalView {
                 Self::cluster_to_run(font_system, self.font(), &attributes, (left, top), &cluster)?;
 
             let background =
-                Self::cluster_background(&cluster, self.font(), &self.color_palette, (left, top));
+                Self::cluster_background(&cluster, self.font(), &attributes, (left, top));
 
             let underline_hyperlink =
                 active_hyperlink.is_some() && cluster.attrs.hyperlink() == active_hyperlink;
@@ -609,15 +609,13 @@ impl TerminalView {
     fn cluster_background(
         cluster: &CellCluster,
         font: &TerminalFont,
-        color_palette: &ColorPalette,
+        attributes: &AttributeResolver,
         (left, top): (i64, i64),
     ) -> Option<Shape> {
-        let background_color = cluster.attrs.background();
-        // We assume the background is rendered in the default background color.
-        if background_color == ColorAttribute::Default {
+        let Some(background_color) = attributes.background_color else {
+            // Assume that the background is rendered in the default background color.
             return None;
-        }
-        let background_color = color::from_srgba(color_palette.resolve_bg(background_color));
+        };
 
         let size: Size = (
             // Precision: We keep multiplication in the u32 range here. Unlikely it's overflowing.
@@ -873,27 +871,31 @@ struct AttributeResolver<'a> {
     palette: &'a ColorPalette,
     pub attributes: &'a CellAttributes,
     foreground_color: Color,
-    background_color: Color,
+    // `None` don't render background.
+    background_color: Option<Color>,
 }
 
 impl<'a> AttributeResolver<'a> {
     pub fn new(palette: &'a ColorPalette, reverse_video: bool, attrs: &'a CellAttributes) -> Self {
         // Precompute the ones we use multiple times.
 
-        let foreground = color::from_srgba(palette.resolve_fg(attrs.foreground()));
-        let background = color::from_srgba(palette.resolve_bg(attrs.background()));
+        let (foreground, background) = (attrs.foreground(), attrs.background());
+        let background_default = background == ColorAttribute::Default;
 
-        let (foreground, background) = if attrs.reverse() != reverse_video {
-            (background, foreground)
+        let foreground = color::from_srgba(palette.resolve_fg(foreground));
+        let background = color::from_srgba(palette.resolve_bg(background));
+
+        let (foreground, background, background_default) = if attrs.reverse() != reverse_video {
+            (background, foreground, false)
         } else {
-            (foreground, background)
+            (foreground, background, background_default)
         };
 
         Self {
             palette,
             attributes: attrs,
             foreground_color: foreground,
-            background_color: background,
+            background_color: (!background_default).then_some(background),
         }
     }
 
