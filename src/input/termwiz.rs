@@ -3,11 +3,16 @@
 //! This module provides a converter from `winit` keyboard events (0.30) to `termwiz`'s `KeyCode`
 //! (as used by `wezterm-term`).
 
-use termwiz::input::{KeyCode, Modifiers};
+use massive_geometry::Point;
 use winit::{
-    event::KeyEvent,
+    event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, WindowEvent},
     keyboard::{Key, ModifiersState, NamedKey},
 };
+
+use termwiz::input::{KeyCode, Modifiers};
+use wezterm_term::{MouseButton, MouseEventKind};
+
+use massive_input::Event;
 
 /// Convert a full `winit` `KeyEvent` to a `(KeyCode, Modifiers)` pair.
 /// Returns `None` when the event shouldn't be forwarded to the terminal
@@ -19,7 +24,7 @@ pub fn convert_key_event(event: &KeyEvent, mods: ModifiersState) -> Option<(KeyC
 }
 
 /// Convert a `winit` `ModifiersState` to `termwiz` `Modifiers`.
-fn convert_modifiers(mods: ModifiersState) -> Modifiers {
+pub fn convert_modifiers(mods: ModifiersState) -> Modifiers {
     let mut out = Modifiers::NONE;
     if mods.shift_key() {
         out |= Modifiers::SHIFT;
@@ -123,5 +128,78 @@ fn convert_named_key(named: &NamedKey) -> Option<KeyCode> {
         NamedKey::ContextMenu => Some(KeyCode::Menu),
         // All remaining keys not explicitly mapped above are ignored for now.
         _ => None,
+    }
+}
+
+pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, Point)> {
+    let point = ev.pos()?;
+    let window_event = ev.window_event()?;
+
+    let (kind, button) = match window_event {
+        WindowEvent::CursorMoved {
+            device_id,
+            position: _,
+        } => (
+            MouseEventKind::Move,
+            mouse_button_pressed_on_device(ev, *device_id).unwrap_or(MouseButton::None),
+        ),
+        WindowEvent::MouseWheel {
+            device_id: _,
+            delta: MouseScrollDelta::LineDelta(xd, 0.0),
+            phase: _,
+        } => (
+            MouseEventKind::Press,
+            if *xd < 0.0 {
+                MouseButton::WheelLeft((-xd).round() as usize)
+            } else {
+                MouseButton::WheelRight(xd.round() as usize)
+            },
+        ),
+        WindowEvent::MouseWheel {
+            device_id: _,
+            delta: MouseScrollDelta::LineDelta(0.0, yd),
+            phase: _,
+        } => (
+            MouseEventKind::Press,
+            if *yd < 0.0 {
+                MouseButton::WheelUp((-yd).round() as usize)
+            } else {
+                MouseButton::WheelDown(yd.round() as usize)
+            },
+        ),
+        WindowEvent::MouseInput {
+            device_id,
+            state,
+            button: _,
+        } => (
+            match state {
+                ElementState::Pressed => MouseEventKind::Press,
+                ElementState::Released => MouseEventKind::Release,
+            },
+            mouse_button_pressed_on_device(ev, *device_id).unwrap_or(MouseButton::None),
+        ),
+        _ => return None,
+    };
+
+    Some((kind, button, point))
+}
+
+fn mouse_button_pressed_on_device(ev: &Event, device_id: DeviceId) -> Option<MouseButton> {
+    let (button, _) = ev
+        .states()
+        .pointing_device(device_id)?
+        .buttons
+        .iter()
+        .filter(|(_, s)| s.element == ElementState::Pressed)
+        // ADR: Deciding to return the latest pressed one.
+        .max_by_key(|(_, s)| s.when)?;
+
+    match button {
+        event::MouseButton::Left => Some(MouseButton::Left),
+        event::MouseButton::Right => Some(MouseButton::Right),
+        event::MouseButton::Middle => Some(MouseButton::Middle),
+        event::MouseButton::Back => None,
+        event::MouseButton::Forward => None,
+        event::MouseButton::Other(_) => None,
     }
 }

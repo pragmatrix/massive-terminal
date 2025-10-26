@@ -1,4 +1,5 @@
 use std::{
+    cell,
     io::{self, ErrorKind},
     ops::Range,
     sync::{self, Arc},
@@ -9,6 +10,7 @@ use anyhow::{Result, anyhow, bail};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
+use euclid::Point2D;
 use log::{info, trace, warn};
 use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
@@ -21,11 +23,11 @@ use winit::{
 
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use wezterm_term::{
-    KeyCode, KeyModifiers, Line, StableRowIndex, Terminal, TerminalConfiguration, color,
+    KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex, Terminal, TerminalConfiguration, color,
 };
 
-use massive_geometry::{Camera, Color, Identity};
-use massive_input::{EventManager, ExternalEvent, MouseGesture, Movement};
+use massive_geometry::{Camera, Color, Identity, Point};
+use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_scene::{Handle, Location, Matrix};
 use massive_shell::{
     ApplicationContext, AsyncWindowRenderer, Scene, ShellEvent, ShellWindow, shell,
@@ -39,10 +41,11 @@ mod window_geometry;
 mod window_state;
 
 use crate::{
+    input::termwiz::{convert_modifiers, convert_mouse_event},
     logical_line::LogicalLine,
     range_ops::WithLength,
     terminal::*,
-    window_geometry::{PixelPoint, WindowGeometry},
+    window_geometry::{PixelPoint, PixelUnit, WindowGeometry},
     window_state::WindowState,
 };
 
@@ -312,6 +315,7 @@ impl MassiveTerminal {
 
     // Robustness: May not end the terminal when this returns an error?
     // Architecture: Think about a general strategy about how to handle recoverable errors.
+    // Correctness: There are a number of locks on the terminal here, may lock only once.
     fn process_window_event(
         &mut self,
         window_id: WindowId,
@@ -356,7 +360,7 @@ impl MassiveTerminal {
                     .lock()
                     .screen_mut()
                     .for_each_logical_line_in_stable_range_mut(
-                        cell_pos.row.with_len(1),
+                        cell_pos.stable_row.with_len(1),
                         |_, lines| {
                             Line::apply_hyperlink_rules(&config::DEFAULT_HYPERLINK_RULES, lines);
                             true
@@ -375,7 +379,7 @@ impl MassiveTerminal {
                         let geometry = self.presenter.view_geometry();
                         let cell_pos = geometry.hit_test_cell(view_px);
                         if let Some(cell) =
-                            geometry.get_cell(cell_pos, self.terminal().lock().screen_mut())
+                            geometry.get_cell(cell_pos, self.presenter.terminal.lock().screen_mut())
                             && let Some(hyperlink) = cell.attrs().hyperlink()
                             && let Err(e) = open_file_http_or_mailto_url(hyperlink.uri())
                         {
@@ -403,6 +407,10 @@ impl MassiveTerminal {
                 }
             }
         }
+
+        // Process events that need to be forwarded to the terminal when mouse reporting is on.
+
+        Self::may_forward_event_to_terminal(&ev, &self.presenter, window_pos_to_terminal_view);
 
         // Process remaining events
 
@@ -455,6 +463,56 @@ impl MassiveTerminal {
             _ => {}
         }
         Ok(())
+    }
+
+    // Architecture: Is the presenter responsible for this?
+    fn may_forward_event_to_terminal(
+        ev: &Event,
+        presenter: &TerminalPresenter,
+        map_to_view: impl Fn(Point) -> Option<PixelPoint>,
+    ) {
+        let mut terminal = presenter.terminal.lock();
+
+        if !terminal.is_mouse_grabbed() {
+            return;
+        }
+
+        let Some((kind, button, point)) = convert_mouse_event(ev) else {
+            return;
+        };
+
+        // Performance: Shouldn't we check if the pos is on the view before converting the mouse event?
+        let Some(point_on_view) = map_to_view(point) else {
+            return;
+        };
+
+        let geometry = presenter.view_geometry();
+        let cell_pos = geometry.hit_test_cell(point_on_view);
+
+        let stable_top = terminal.screen().visible_row_to_stable_row(0);
+        let visible_row = cell_pos.stable_row - stable_top;
+
+        let Some(column): Option<usize> = cell_pos.column.try_into().ok() else {
+            return;
+        };
+
+        let Some(discrete) = point_on_view.round().try_cast() else {
+            return;
+        };
+
+        let event = MouseEvent {
+            kind,
+            x: column,
+            y: visible_row as _,
+            x_pixel_offset: discrete.x,
+            y_pixel_offset: discrete.y,
+            button,
+            modifiers: convert_modifiers(ev.states().keyboard_modifiers()),
+        };
+
+        if let Err(e) = terminal.mouse_event(event) {
+            warn!("Sending mouse event to terminal failed: {e:?}")
+        }
     }
 
     fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {

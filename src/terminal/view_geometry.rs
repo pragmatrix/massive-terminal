@@ -71,15 +71,15 @@ impl ViewGeometry {
 
         CellPos {
             column,
-            row: row + self.stable_range.start,
+            stable_row: row + self.stable_range.start,
         }
     }
 
     pub fn get_cell<'s>(&self, cell: CellPos, screen: &'s mut Screen) -> Option<&'s Cell> {
         let visible_start = screen.visible_row_to_stable_row(0);
         // Visible on our view.
-        if self.stable_range.contains(&cell.row) && cell.column >= 0 {
-            let visible_y = cell.row - visible_start;
+        if self.stable_range.contains(&cell.stable_row) && cell.column >= 0 {
+            let visible_y = cell.stable_row - visible_start;
             return screen
                 // Correctness: Does this actually hit on the column, may need to use visible_cells in Line instead?
                 .get_cell(cell.column.cast_unsigned(), visible_y as i64);
@@ -95,5 +95,5 @@ impl ViewGeometry {
 #[derive(Debug, Copy, Clone)]
 pub struct CellPos {
     pub column: isize,
-    pub row: StableRowIndex,
+    pub stable_row: StableRowIndex,
 }
