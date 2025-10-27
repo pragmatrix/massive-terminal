@@ -1,5 +1,4 @@
 use std::{
-    cell,
     io::{self, ErrorKind},
     ops::Range,
     sync::{self, Arc},
@@ -10,7 +9,6 @@ use anyhow::{Result, anyhow, bail};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use euclid::Point2D;
 use log::{info, trace, warn};
 use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
@@ -45,7 +43,7 @@ use crate::{
     logical_line::LogicalLine,
     range_ops::WithLength,
     terminal::*,
-    window_geometry::{PixelPoint, PixelUnit, WindowGeometry},
+    window_geometry::{PixelPoint, WindowGeometry},
     window_state::WindowState,
 };
 

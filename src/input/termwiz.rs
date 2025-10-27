@@ -168,20 +168,31 @@ pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, P
             },
         ),
         WindowEvent::MouseInput {
-            device_id,
+            device_id: _,
             state,
-            button: _,
+            button,
         } => (
             match state {
                 ElementState::Pressed => MouseEventKind::Press,
                 ElementState::Released => MouseEventKind::Release,
             },
-            mouse_button_pressed_on_device(ev, *device_id).unwrap_or(MouseButton::None),
+            convert_mouse_button(*button)?,
         ),
         _ => return None,
     };
 
     Some((kind, button, point))
+}
+
+fn convert_mouse_button(button: event::MouseButton) -> Option<MouseButton> {
+    match button {
+        event::MouseButton::Left => Some(MouseButton::Left),
+        event::MouseButton::Right => Some(MouseButton::Right),
+        event::MouseButton::Middle => Some(MouseButton::Middle),
+        event::MouseButton::Back => None,
+        event::MouseButton::Forward => None,
+        event::MouseButton::Other(_) => None,
+    }
 }
 
 fn mouse_button_pressed_on_device(ev: &Event, device_id: DeviceId) -> Option<MouseButton> {
