@@ -331,7 +331,9 @@ impl MassiveTerminal {
                 now,
             ))
         else {
-            // Event is redundant.
+            // Event is redundant. If we would process them, Clicks in `mc` for example would not
+            // work on the first try, because `mc` gets confused by winit's behavior to send a
+            // redundant CursorMoved event before ever mouse press / release event.
             return Ok(());
         };
 
