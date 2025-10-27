@@ -384,9 +384,7 @@ impl MassiveTerminal {
 
             // Process events that need to be forwarded to the terminal when mouse reporting is on.
 
-            let is_mouse_reporting_enabled = terminal.is_mouse_grabbed();
-
-            if is_mouse_reporting_enabled {
+            if terminal.is_mouse_grabbed() {
                 Self::may_forward_event_to_terminal(
                     &ev,
                     &mut terminal,
@@ -432,7 +430,7 @@ impl MassiveTerminal {
                             if !self.presenter.selection_progress(&self.scene, progress) {
                                 self.selecting = None;
                             }
-                        }g
+                        }
                     }
                 }
             }
