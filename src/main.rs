@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow, bail};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
 use url::Url;
@@ -323,11 +323,17 @@ impl MassiveTerminal {
         let min_movement_distance = self.min_pixel_distance_considered_movement();
 
         let now = Instant::now();
-        let ev = self.event_manager.event(ExternalEvent::from_window_event(
-            window_id,
-            window_event.clone(),
-            now,
-        ));
+        let Some(ev) = self
+            .event_manager
+            .add_event(ExternalEvent::from_window_event(
+                window_id,
+                window_event.clone(),
+                now,
+            ))
+        else {
+            // Event is redundant.
+            return Ok(());
+        };
 
         let modifiers = ev.states().keyboard_modifiers();
 
@@ -508,6 +514,7 @@ impl MassiveTerminal {
             modifiers: convert_modifiers(ev.states().keyboard_modifiers()),
         };
 
+        debug!("Sending mouse event to terminal {event:?}");
         if let Err(e) = terminal.mouse_event(event) {
             warn!("Sending mouse event to terminal failed: {e:?}")
         }
