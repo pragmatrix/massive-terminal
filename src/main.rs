@@ -517,7 +517,7 @@ impl MassiveTerminal {
             return;
         };
 
-        let Some(discrete) = point_on_view.round().try_cast() else {
+        let Some(discrete_point) = point_on_view.round().try_cast() else {
             return;
         };
 
@@ -525,8 +525,8 @@ impl MassiveTerminal {
             kind,
             x: column,
             y: visible_row as _,
-            x_pixel_offset: discrete.x,
-            y_pixel_offset: discrete.y,
+            x_pixel_offset: discrete_point.x,
+            y_pixel_offset: discrete_point.y,
             button,
             modifiers: convert_modifiers(ev.states().keyboard_modifiers()),
         };
