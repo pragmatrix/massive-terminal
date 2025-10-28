@@ -5,7 +5,7 @@
 
 use massive_geometry::Point;
 use winit::{
-    event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, WindowEvent},
+    event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, TouchPhase, WindowEvent},
     keyboard::{Key, ModifiersState, NamedKey},
 };
 
@@ -132,8 +132,8 @@ fn convert_named_key(named: &NamedKey) -> Option<KeyCode> {
 }
 
 pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, Point)> {
-    let point = ev.pos()?;
     let window_event = ev.window_event()?;
+    let pos = ev.pos()?;
 
     let (kind, button) = match window_event {
         WindowEvent::CursorMoved {
@@ -146,7 +146,7 @@ pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, P
         WindowEvent::MouseWheel {
             device_id: _,
             delta: MouseScrollDelta::LineDelta(xd, 0.0),
-            phase: _,
+            phase: TouchPhase::Moved,
         } => (
             MouseEventKind::Press,
             if *xd < 0.0 {
@@ -158,7 +158,7 @@ pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, P
         WindowEvent::MouseWheel {
             device_id: _,
             delta: MouseScrollDelta::LineDelta(0.0, yd),
-            phase: _,
+            phase: TouchPhase::Moved,
         } => (
             MouseEventKind::Press,
             if *yd < 0.0 {
@@ -181,7 +181,7 @@ pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, P
         _ => return None,
     };
 
-    Some((kind, button, point))
+    Some((kind, button, pos))
 }
 
 fn convert_mouse_button(button: event::MouseButton) -> Option<MouseButton> {
