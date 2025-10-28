@@ -1,6 +1,5 @@
 use std::{
     io::{self, ErrorKind},
-    ops::Range,
     sync::{self, Arc},
     time::{Duration, Instant},
 };
@@ -32,7 +31,6 @@ use massive_shell::{
 };
 
 mod input;
-mod logical_line;
 mod range_ops;
 mod terminal;
 mod window_geometry;
@@ -40,7 +38,6 @@ mod window_state;
 
 use crate::{
     input::termwiz::{convert_modifiers, convert_mouse_event},
-    logical_line::LogicalLine,
     range_ops::WithLength,
     terminal::*,
     window_geometry::{PixelPoint, WindowGeometry},
@@ -415,11 +412,18 @@ impl MassiveTerminal {
 
                             presenter.selection_clear();
                         }
+                        Some(MouseGesture::DoubleClick(point)) => {
+                            if let Some(hit) = window_pos_to_terminal_view(point) {
+                                self.presenter.selection_begin(SelectionMode::Word, hit);
+                                self.selecting = Some(ev.track_movement()
+                                    .expect("Internal error: double click gesture triggered without a mouse button event?"));
+                            }
+                        }
                         Some(MouseGesture::Movement(movement)) => {
                             if let Some(hit) = window_pos_to_terminal_view(movement.from) {
-                                self.presenter.selection_begin(hit);
-                                self.selecting = Some(movement);
+                                self.presenter.selection_begin(SelectionMode::Cell, hit);
                             }
+                            self.selecting = Some(movement);
                         }
                         _ => {}
                     },
@@ -598,7 +602,7 @@ impl MassiveTerminal {
 
         let terminal = self.terminal().lock();
 
-        for line in Self::get_logical_lines(&terminal, sel.stable_rows()) {
+        for line in get_logical_lines(&terminal, sel.stable_rows()) {
             if !s.is_empty() && !last_was_wrapped {
                 s.push('\n');
             }
@@ -628,19 +632,6 @@ impl MassiveTerminal {
         }
 
         s
-    }
-
-    fn get_logical_lines(terminal: &Terminal, lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
-        let mut logical_lines = Vec::new();
-
-        terminal
-            .screen()
-            .for_each_logical_line_in_stable_range(lines, |stable_range, lines| {
-                logical_lines.push(LogicalLine::from_physical_range(stable_range, lines));
-                true
-            });
-
-        logical_lines
     }
 }
 

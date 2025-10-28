@@ -50,11 +50,11 @@ impl ViewGeometry {
         match *selection {
             Selection::Unselected => None,
             Selection::Begun { .. } => None,
-            Selection::Selecting { from, to } => {
+            Selection::Selecting { from, to, .. } => {
                 let to = self.hit_test_cell(to).into();
                 Some(SelectedRange::new(from, to))
             }
-            Selection::Selected { from, to } => Some(SelectedRange::new(from, to)),
+            Selection::Selected { from, to, .. } => Some(SelectedRange::new(from, to)),
         }
     }
 

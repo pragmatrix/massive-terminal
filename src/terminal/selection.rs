@@ -1,36 +1,47 @@
 use std::{cmp::Ordering, ops::Range};
 
 use log::{error, warn};
-use wezterm_term::StableRowIndex;
+use wezterm_term::{DoubleClickRange, StableRowIndex, Terminal};
 
 use crate::{
-    range_ops::RangeOps,
-    terminal::CellPos,
+    range_ops::{RangeOps, WithLength},
+    terminal::{CellPos, get_logical_lines},
     window_geometry::{CellPoint, PixelPoint},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionMode {
+    Cell,
+    Word,
+}
 
 #[derive(Debug, Default)]
 pub enum Selection {
     #[default]
     Unselected,
     Begun {
+        mode: SelectionMode,
         pos: SelectionPos,
+        // Architecture: nest Selecting and Selected under Begun and rename Begun to Active, this
+        // way we won't be duplicated mode and from?
     },
     // We store the ending position as pixel point, because the selection might change when the view
     // is scrolled, but the starting point always needs to point on the cell originally selected.
     Selecting {
+        mode: SelectionMode,
         from: SelectionPos,
         to: PixelPoint,
     },
     Selected {
+        mode: SelectionMode,
         from: SelectionPos,
         to: SelectionPos,
     },
 }
 
 impl Selection {
-    pub fn begin(&mut self, pos: SelectionPos) {
-        *self = Self::Begun { pos }
+    pub fn begin(&mut self, mode: SelectionMode, pos: SelectionPos) {
+        *self = Self::Begun { mode, pos }
     }
 
     pub fn can_progress(&self) -> bool {
@@ -40,11 +51,15 @@ impl Selection {
     #[must_use]
     pub fn progress(&mut self, end: PixelPoint) -> bool {
         *self = match &self {
-            Self::Begun { pos } => Self::Selecting {
+            Self::Begun { mode, pos } => Self::Selecting {
+                mode: *mode,
                 from: *pos,
                 to: end,
             },
-            Self::Selecting { from: start, .. } => Self::Selecting {
+            Self::Selecting {
+                mode, from: start, ..
+            } => Self::Selecting {
+                mode: *mode,
                 from: *start,
                 to: end,
             },
@@ -70,7 +85,11 @@ impl Selection {
     pub fn end(&mut self, to: SelectionPos) {
         *self = match &self {
             Self::Begun { .. } => Self::Unselected,
-            Self::Selecting { from, .. } => Self::Selected { from: *from, to },
+            Self::Selecting { mode, from, .. } => Self::Selected {
+                mode: *mode,
+                from: *from,
+                to,
+            },
             _ => {
                 error!(
                     "Internal error: Selection is ending, but state is {:?}",
@@ -196,3 +215,45 @@ impl SelectedRange {
         Some(SelectedRange::new(start, end))
     }
 }
+
+// Copied from wezterm-gui/src/selection.rs
+
+/// Computes the selection range for the word around the specified coords
+pub fn word_around(terminal: &Terminal, start: SelectionPos) -> Option<SelectedRange> {
+    for logical in get_logical_lines(terminal, start.row.with_len(1)) {
+        if !logical.contains_y(start.row) {
+            continue;
+        }
+
+        let start_idx = logical.xy_to_logical_x(start.column, start.row);
+        return match logical
+            .logical
+            .compute_double_click_range(start_idx, is_double_click_word)
+        {
+            DoubleClickRange::RangeWithWrap(click_range) | DoubleClickRange::Range(click_range) => {
+                let (start_y, start_x) = logical.logical_x_to_physical_coord(click_range.start);
+                let (end_y, end_x) = logical.logical_x_to_physical_coord(click_range.end - 1);
+
+                Some(SelectedRange::new(
+                    SelectionPos::new(start_x, start_y),
+                    SelectionPos::new(end_x, end_y),
+                ))
+            }
+        };
+    }
+
+    error!("word_around: logical line does not contain stable row.");
+    None
+}
+
+fn is_double_click_word(s: &str) -> bool {
+    match s.chars().count() {
+        1 => !DEFAULT_WORD_BOUNDARY.contains(s),
+        0 => false,
+        _ => true,
+    }
+}
+
+// Feature: Make this configurable
+// Precision: Use the help of `unicode_segmentation`?
+const DEFAULT_WORD_BOUNDARY: &str = " \t\n{[}]()\"'`";

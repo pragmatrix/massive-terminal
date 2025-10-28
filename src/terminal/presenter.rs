@@ -14,8 +14,8 @@ use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
     terminal::{
-        ScreenGeometry, SelectedRange, Selection, TerminalGeometry, TerminalViewParams,
-        ViewGeometry,
+        ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry,
+        TerminalViewParams, ViewGeometry,
     },
     window_geometry::PixelPoint,
 };
@@ -391,10 +391,10 @@ impl TerminalPresenter {
 // Selection
 
 impl TerminalPresenter {
-    pub fn selection_begin(&mut self, hit: PixelPoint) {
+    pub fn selection_begin(&mut self, mode: SelectionMode, hit: PixelPoint) {
         self.selection_clear();
         self.selection
-            .begin(self.view_geometry().hit_test_cell(hit).into());
+            .begin(mode, self.view_geometry().hit_test_cell(hit).into());
     }
 
     pub fn selection_clear(&mut self) {
