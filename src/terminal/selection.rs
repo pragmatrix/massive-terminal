@@ -1,6 +1,5 @@
 use std::{cmp::Ordering, ops::Range};
 
-use derive_more::Deref;
 use log::{error, warn};
 use wezterm_term::StableRowIndex;
 
@@ -116,27 +115,31 @@ impl SelectionPos {
     }
 }
 
-/// Selection range.
+/// Selection range. Always normalized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SelectionRange {
-    pub start: SelectionPos,
-    pub end: SelectionPos,
+pub struct SelectedRange {
+    start: SelectionPos,
+    end: SelectionPos,
 }
 
-impl SelectionRange {
+impl SelectedRange {
     pub fn new(start: SelectionPos, end: SelectionPos) -> Self {
-        Self { start, end }
+        if end >= start {
+            Self { start, end }
+        } else {
+            Self {
+                start: end,
+                end: start,
+            }
+        }
     }
 
-    pub fn normalized(&self) -> NormalizedSelectionRange {
-        if self.end >= self.start {
-            NormalizedSelectionRange(*self)
-        } else {
-            NormalizedSelectionRange(Self {
-                start: self.end,
-                end: self.start,
-            })
-        }
+    pub fn start(&self) -> &SelectionPos {
+        &self.start
+    }
+
+    pub fn end(&self) -> &SelectionPos {
+        &self.end
     }
 
     pub fn stable_rows(&self) -> Range<StableRowIndex> {
@@ -174,12 +177,7 @@ impl SelectionRange {
             to..from + 1
         }
     }
-}
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Deref)]
-pub struct NormalizedSelectionRange(SelectionRange);
-
-impl NormalizedSelectionRange {
     pub fn clamp_to_rows(self, rows: Range<StableRowIndex>, columns: usize) -> Option<Self> {
         if !self.stable_rows().intersects(&rows) {
             return None;
@@ -198,6 +196,6 @@ impl NormalizedSelectionRange {
         if start.row == end.row && start.column > end.column {
             return None;
         }
-        Some(Self(SelectionRange { start, end }))
+        Some(SelectedRange::new(start, end))
     }
 }

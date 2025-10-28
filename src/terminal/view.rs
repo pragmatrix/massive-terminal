@@ -27,9 +27,7 @@ use super::TerminalGeometry;
 use crate::{
     TerminalFont,
     range_ops::{RangeOps, WithLength},
-    terminal::{
-        NormalizedSelectionRange, SelectionRange, ViewGeometry, scroll_locations::ScrollLocations,
-    },
+    terminal::{SelectedRange, ViewGeometry, scroll_locations::ScrollLocations},
     window_geometry::CellRect,
 };
 use massive_animation::{Animated, Interpolation};
@@ -314,7 +312,7 @@ impl ViewUpdate<'_> {
 
     pub fn selection(
         &mut self,
-        selection: Option<NormalizedSelectionRange>,
+        selection: Option<SelectedRange>,
         terminal_geometry: &TerminalGeometry,
     ) {
         self.view
@@ -779,7 +777,7 @@ impl TerminalView {
     fn update_selection(
         &mut self,
         scene: &Scene,
-        selection: Option<NormalizedSelectionRange>,
+        selection: Option<SelectedRange>,
         terminal_geometry: &TerminalGeometry,
     ) {
         match selection {
@@ -832,10 +830,9 @@ impl TerminalView {
     }
 
     /// A selection can be rendered in one to three rectangles.
-    fn selection_rects(selection: &SelectionRange, terminal_columns: usize) -> Vec<CellRect> {
-        debug_assert!(selection.end >= selection.start);
-        let start_point = selection.start.point();
-        let end_point = selection.end.point();
+    fn selection_rects(selection: &SelectedRange, terminal_columns: usize) -> Vec<CellRect> {
+        let start_point = selection.start().point();
+        let end_point = selection.end().point();
 
         let lines_covering = end_point.y + 1 - start_point.y;
         debug_assert!(lines_covering > 0);

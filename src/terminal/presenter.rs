@@ -14,7 +14,7 @@ use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
     terminal::{
-        NormalizedSelectionRange, ScreenGeometry, Selection, TerminalGeometry, TerminalViewParams,
+        ScreenGeometry, SelectedRange, Selection, TerminalGeometry, TerminalViewParams,
         ViewGeometry,
     },
     window_geometry::PixelPoint,
@@ -319,7 +319,7 @@ impl TerminalPresenter {
 
         // Update selection
         {
-            let selection_range = view_geometry.selection_range(&self.selection);
+            let selection_range = view_geometry.selected_range(&self.selection);
             let selection_rows = selection_range.map(|s| s.stable_rows()).unwrap_or_default();
             let changes_intersect_with_selection =
                 changed_lines.iter().any(|l| selection_rows.contains(l));
@@ -443,8 +443,8 @@ impl TerminalPresenter {
         cont
     }
 
-    pub fn selection_range(&self) -> Option<NormalizedSelectionRange> {
-        self.view_geometry().selection_range(&self.selection)
+    pub fn selected_range(&self) -> Option<SelectedRange> {
+        self.view_geometry().selected_range(&self.selection)
     }
 
     pub fn view_geometry(&self) -> ViewGeometry {

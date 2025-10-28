@@ -5,9 +5,7 @@ use wezterm_term::{Cell, Screen, StableRowIndex};
 
 use crate::{
     range_ops::WithLength,
-    terminal::{
-        NormalizedSelectionRange, ScreenGeometry, Selection, SelectionRange, TerminalGeometry,
-    },
+    terminal::{ScreenGeometry, SelectedRange, Selection, TerminalGeometry},
     window_geometry::PixelPoint,
 };
 
@@ -47,16 +45,16 @@ impl ViewGeometry {
         self.terminal.terminal_size
     }
 
-    /// Computes the normalized selection range.
-    pub fn selection_range(&self, selection: &Selection) -> Option<NormalizedSelectionRange> {
+    /// Computes the normalized currently selected range.
+    pub fn selected_range(&self, selection: &Selection) -> Option<SelectedRange> {
         match *selection {
             Selection::Unselected => None,
             Selection::Begun { .. } => None,
             Selection::Selecting { from, to } => {
                 let to = self.hit_test_cell(to).into();
-                Some(SelectionRange::new(from, to).normalized())
+                Some(SelectedRange::new(from, to))
             }
-            Selection::Selected { from, to } => Some(SelectionRange::new(from, to).normalized()),
+            Selection::Selected { from, to } => Some(SelectedRange::new(from, to)),
         }
     }
 
