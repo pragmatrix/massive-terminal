@@ -27,7 +27,8 @@ use massive_shell::Scene;
 #[derive(Debug)]
 pub struct TerminalPresenter {
     geometry: TerminalGeometry,
-    // Architecture: The presenter should probably act as a facade to the underlying terminal and not use a `Arc<Mutex<>>` here.
+    // Architecture: The presenter should probably act as a facade to the underlying terminal and
+    // not use a `Arc<Mutex<>>` here.
     #[debug(skip)]
     pub terminal: Arc<Mutex<Terminal>>,
 
