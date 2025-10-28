@@ -165,7 +165,7 @@ impl TerminalPresenter {
                     .and_then(|cell| cell.attrs().hyperlink())
                     .map(|hyperlink| HighlightedHyperlink {
                         hyperlink: hyperlink.clone(),
-                        row: cell_pos.row,
+                        row: cell_pos.stable_row,
                     });
             }
 

@@ -101,7 +101,7 @@ impl PartialOrd for SelectionPos {
 
 impl From<CellPos> for SelectionPos {
     fn from(value: CellPos) -> Self {
-        SelectionPos::new(value.column.max(0).cast_unsigned(), value.row)
+        SelectionPos::new(value.column.max(0).cast_unsigned(), value.stable_row)
     }
 }
 

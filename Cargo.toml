@@ -85,7 +85,7 @@ tokio-util = { version = "0.7.16", features = ["io"] }
 tracing = "0.1.40"
 tuple = "0.5.2"
 wgpu = "26.0.1"
-winit = { version = "0.30.1", features = ["rwh_06"] }
+winit = { version = "0.30.12", features = ["rwh_06"] }
 
 # wezterm needs version 1 for now.
 bitflags = { version = "1.3" }

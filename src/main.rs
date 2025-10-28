@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow, bail};
 use arboard::Clipboard;
 use cosmic_text::{FontSystem, fontdb};
 use derive_more::Debug;
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
 use url::Url;
@@ -21,11 +21,11 @@ use winit::{
 
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
 use wezterm_term::{
-    KeyCode, KeyModifiers, Line, StableRowIndex, Terminal, TerminalConfiguration, color,
+    KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex, Terminal, TerminalConfiguration, color,
 };
 
-use massive_geometry::{Camera, Color, Identity};
-use massive_input::{EventManager, ExternalEvent, MouseGesture, Movement};
+use massive_geometry::{Camera, Color, Identity, Point};
+use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_scene::{Handle, Location, Matrix};
 use massive_shell::{
     ApplicationContext, AsyncWindowRenderer, Scene, ShellEvent, ShellWindow, shell,
@@ -39,6 +39,7 @@ mod window_geometry;
 mod window_state;
 
 use crate::{
+    input::termwiz::{convert_modifiers, convert_mouse_event},
     logical_line::LogicalLine,
     range_ops::WithLength,
     terminal::*,
@@ -312,6 +313,7 @@ impl MassiveTerminal {
 
     // Robustness: May not end the terminal when this returns an error?
     // Architecture: Think about a general strategy about how to handle recoverable errors.
+    // Correctness: There are a number of locks on the terminal here, may lock only once.
     fn process_window_event(
         &mut self,
         window_id: WindowId,
@@ -321,11 +323,19 @@ impl MassiveTerminal {
         let min_movement_distance = self.min_pixel_distance_considered_movement();
 
         let now = Instant::now();
-        let ev = self.event_manager.event(ExternalEvent::from_window_event(
-            window_id,
-            window_event.clone(),
-            now,
-        ));
+        let Some(ev) = self
+            .event_manager
+            .add_event(ExternalEvent::from_window_event(
+                window_id,
+                window_event.clone(),
+                now,
+            ))
+        else {
+            // Event is redundant. If we would process them, Clicks in `mc` for example would not
+            // work on the first try, because `mc` gets confused by winit's behavior to send a
+            // redundant CursorMoved event before ever mouse press / release event.
+            return Ok(());
+        };
 
         let modifiers = ev.states().keyboard_modifiers();
 
@@ -336,69 +346,91 @@ impl MassiveTerminal {
                 .map(|p| (p.x, p.y).into())
         };
 
-        // Process mouse pointer movements
+        {
+            let presenter = &mut self.presenter;
+            let view_geometry = presenter.view_geometry();
+            // Architecture: While we are locking the terminal, calling into presenter might lock it
+            // there, too. There must be some better way here (pull out the selection, or the
+            // terminal).
+            let terminal = presenter.terminal.clone();
+            let mut terminal = terminal.lock();
 
-        if let Some(pos) = ev.pos() {
-            let mouse_pointer_pos = window_pos_to_terminal_view(pos);
-            *mouse_pointer_on_view = mouse_pointer_pos;
+            // Process mouse pointer movements
 
-            // Refresh implicit hyperlinks.
-            //
-            // Precision: This is asynchronous. The hit pos may be out of range, or somewhere else.
-            // But good enough for now.
-            if let Some(current_mouse_pos) = mouse_pointer_pos {
-                let cell_pos = self
-                    .presenter
-                    .view_geometry()
-                    .hit_test_cell(current_mouse_pos);
-                self.presenter
-                    .terminal
-                    .lock()
-                    .screen_mut()
-                    .for_each_logical_line_in_stable_range_mut(
-                        cell_pos.row.with_len(1),
-                        |_, lines| {
-                            Line::apply_hyperlink_rules(&config::DEFAULT_HYPERLINK_RULES, lines);
-                            true
-                        },
-                    );
+            if let Some(pos) = ev.pos() {
+                let mouse_pointer_pos = window_pos_to_terminal_view(pos);
+                *mouse_pointer_on_view = mouse_pointer_pos;
+
+                // Refresh implicit hyperlinks.
+                //
+                // Precision: This is asynchronous. The hit pos may be out of range, or somewhere else.
+                // But good enough for now.
+                if let Some(current_mouse_pos) = mouse_pointer_pos {
+                    let cell_pos = view_geometry.hit_test_cell(current_mouse_pos);
+                    terminal
+                        .screen_mut()
+                        .for_each_logical_line_in_stable_range_mut(
+                            cell_pos.stable_row.with_len(1),
+                            |_, lines| {
+                                Line::apply_hyperlink_rules(
+                                    &config::DEFAULT_HYPERLINK_RULES,
+                                    lines,
+                                );
+                                true
+                            },
+                        );
+                }
             }
-        }
 
-        // Process selecting user state
+            // Process events that need to be forwarded to the terminal when mouse reporting is on.
 
-        match &mut self.selecting {
-            None => match ev.detect_mouse_gesture(MouseButton::Left, min_movement_distance) {
-                // WezTerm reacts on Click, macOS term on Clicked.
-                Some(MouseGesture::Clicked(point)) => {
-                    if let Some(view_px) = window_pos_to_terminal_view(point) {
-                        let geometry = self.presenter.view_geometry();
-                        let cell_pos = geometry.hit_test_cell(view_px);
-                        if let Some(cell) =
-                            geometry.get_cell(cell_pos, self.terminal().lock().screen_mut())
-                            && let Some(hyperlink) = cell.attrs().hyperlink()
-                            && let Err(e) = open_file_http_or_mailto_url(hyperlink.uri())
-                        {
-                            warn!("{e:?}");
+            if terminal.is_mouse_grabbed() {
+                Self::may_forward_event_to_terminal(
+                    &ev,
+                    &mut terminal,
+                    &view_geometry,
+                    window_pos_to_terminal_view,
+                );
+
+                self.presenter.selection_clear();
+                self.selecting = None;
+            } else {
+                // Process selecting user state
+
+                match &mut self.selecting {
+                    None => match ev.detect_mouse_gesture(MouseButton::Left, min_movement_distance)
+                    {
+                        // WezTerm reacts on Click, macOS term on Clicked.
+                        Some(MouseGesture::Clicked(point)) => {
+                            if let Some(view_px) = window_pos_to_terminal_view(point) {
+                                let cell_pos = view_geometry.hit_test_cell(view_px);
+                                if let Some(cell) =
+                                    view_geometry.get_cell(cell_pos, terminal.screen_mut())
+                                    && let Some(hyperlink) = cell.attrs().hyperlink()
+                                    && let Err(e) = open_file_http_or_mailto_url(hyperlink.uri())
+                                {
+                                    warn!("{e:?}");
+                                }
+                            }
+
+                            presenter.selection_clear();
                         }
-                    }
+                        Some(MouseGesture::Movement(movement)) => {
+                            if let Some(hit) = window_pos_to_terminal_view(movement.from) {
+                                self.presenter.selection_begin(hit);
+                                self.selecting = Some(movement);
+                            }
+                        }
+                        _ => {}
+                    },
+                    Some(movement) => {
+                        if let Some(progress) = movement.track_to(&ev) {
+                            let progress = progress.map_or_cancel(window_pos_to_terminal_view);
 
-                    self.presenter.selection_clear();
-                }
-                Some(MouseGesture::Movement(movement)) => {
-                    if let Some(hit) = window_pos_to_terminal_view(movement.from) {
-                        self.presenter.selection_begin(hit);
-                        self.selecting = Some(movement);
-                    }
-                }
-                _ => {}
-            },
-            Some(movement) => {
-                if let Some(progress) = movement.track_to(&ev) {
-                    let progress = progress.map_or_cancel(window_pos_to_terminal_view);
-
-                    if !self.presenter.selection_progress(&self.scene, progress) {
-                        self.selecting = None;
+                            if !self.presenter.selection_progress(&self.scene, progress) {
+                                self.selecting = None;
+                            }
+                        }
                     }
                 }
             }
@@ -412,6 +444,7 @@ impl MassiveTerminal {
             }
             WindowEvent::Focused(focused) => {
                 // Architecture: Should we track the focused state of the window in the EventAggregator?
+                // Architecture: Move this to the part where the terminal is locked above.
                 self.window_state.focused = *focused;
                 self.terminal().lock().focus_changed(*focused);
             }
@@ -455,6 +488,53 @@ impl MassiveTerminal {
             _ => {}
         }
         Ok(())
+    }
+
+    // Architecture: Is the presenter responsible for this?
+    fn may_forward_event_to_terminal(
+        ev: &Event,
+        terminal: &mut Terminal,
+        geometry: &ViewGeometry,
+        map_to_view: impl Fn(Point) -> Option<PixelPoint>,
+    ) {
+        debug_assert!(terminal.is_mouse_grabbed());
+
+        let Some((kind, button, point)) = convert_mouse_event(ev) else {
+            return;
+        };
+
+        // Performance: Shouldn't we check if the pos is on the view before converting the mouse event?
+        let Some(point_on_view) = map_to_view(point) else {
+            return;
+        };
+
+        let cell_pos = geometry.hit_test_cell(point_on_view);
+
+        let stable_top = terminal.screen().visible_row_to_stable_row(0);
+        let visible_row = cell_pos.stable_row - stable_top;
+
+        let Some(column): Option<usize> = cell_pos.column.try_into().ok() else {
+            return;
+        };
+
+        let Some(discrete_point) = point_on_view.round().try_cast() else {
+            return;
+        };
+
+        let event = MouseEvent {
+            kind,
+            x: column,
+            y: visible_row as _,
+            x_pixel_offset: discrete_point.x,
+            y_pixel_offset: discrete_point.y,
+            button,
+            modifiers: convert_modifiers(ev.states().keyboard_modifiers()),
+        };
+
+        debug!("Sending mouse event to terminal {event:?}");
+        if let Err(e) = terminal.mouse_event(event) {
+            warn!("Sending mouse event to terminal failed: {e:?}")
+        }
     }
 
     fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {
