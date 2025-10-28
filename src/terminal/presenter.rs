@@ -273,8 +273,13 @@ impl TerminalPresenter {
             });
         }
 
+        // Gather everything from the terminal we need later.
+
         let cursor_pos = terminal.cursor_pos();
         let cursor_stable_y = screen_geometry.visible_range.start + cursor_pos.y as StableRowIndex;
+        let selected_range = view_geometry.selected_user_range(&self.selection);
+        let selected_range =
+            selected_range.and_then(|r| r.extend(self.selection.mode().unwrap(), &terminal));
 
         // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
         // changes can be pushed to it as fast as possible.
@@ -319,8 +324,7 @@ impl TerminalPresenter {
 
         // Update selection
         {
-            let selection_range = view_geometry.selected_range(&self.selection);
-            let selection_rows = selection_range.map(|s| s.stable_rows()).unwrap_or_default();
+            let selection_rows = selected_range.map(|s| s.stable_rows()).unwrap_or_default();
             let changes_intersect_with_selection =
                 changed_lines.iter().any(|l| selection_rows.contains(l));
 
@@ -329,7 +333,7 @@ impl TerminalPresenter {
                 self.selection.reset();
             }
             view_update.selection(
-                selection_range
+                selected_range
                     // The clamping is needed, otherwise we could keep too many matrix locations.
                     // Architecture: The clamping should happen in the view (there where the problem arises)
                     .and_then(|range| {
@@ -444,7 +448,9 @@ impl TerminalPresenter {
     }
 
     pub fn selected_range(&self) -> Option<SelectedRange> {
-        self.view_geometry().selected_range(&self.selection)
+        // Architecture: May be a SelectedUserRange can transport SelectionMode?
+        let range = self.view_geometry().selected_user_range(&self.selection);
+        range.and_then(|r| r.extend(self.selection.mode().unwrap(), &self.terminal.lock()))
     }
 
     pub fn view_geometry(&self) -> ViewGeometry {

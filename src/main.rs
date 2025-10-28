@@ -79,6 +79,9 @@ struct MassiveTerminal {
     terminal_scroller: TerminalScroller,
 
     // User state
+    //
+    // Architecture: The movement tracking here and the selection tracking in the presenter should
+    // probably be combined.
     selecting: Option<Movement>,
 
     #[debug(skip)]
@@ -416,7 +419,7 @@ impl MassiveTerminal {
                             if let Some(hit) = window_pos_to_terminal_view(point) {
                                 self.presenter.selection_begin(SelectionMode::Word, hit);
                                 self.selecting = Some(ev.track_movement()
-                                    .expect("Internal error: double click gesture triggered without a mouse button event?"));
+                                    .expect("Internal error: double click gesture triggered without a mouse button event"));
                             }
                         }
                         Some(MouseGesture::Movement(movement)) => {
@@ -587,6 +590,10 @@ impl MassiveTerminal {
 
 impl MassiveTerminal {
     // Copied from wezterm_gui/src/termwindow/selection.rs
+
+    // Architecture: This does not seem to belong here, push this down to the presenter at least.
+    // Also it seems to lock the terminal multiple lines, see the current implementation of
+    // selected_range().
 
     /// Returns the selected text
     pub fn selected_text(&self) -> String {

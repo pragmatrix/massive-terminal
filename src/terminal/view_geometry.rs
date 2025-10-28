@@ -1,11 +1,11 @@
 #![allow(unused)]
 use std::ops::Range;
 
-use wezterm_term::{Cell, Screen, StableRowIndex};
+use wezterm_term::{Cell, Screen, StableRowIndex, Terminal};
 
 use crate::{
     range_ops::WithLength,
-    terminal::{ScreenGeometry, SelectedRange, Selection, TerminalGeometry},
+    terminal::{ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry},
     window_geometry::PixelPoint,
 };
 
@@ -45,16 +45,21 @@ impl ViewGeometry {
         self.terminal.terminal_size
     }
 
-    /// Computes the normalized currently selected range.
-    pub fn selected_range(&self, selection: &Selection) -> Option<SelectedRange> {
+    /// Computes the currently selected range.
+    ///
+    /// This needs terminal for word selection.
+    pub fn selected_user_range(&self, selection: &Selection) -> Option<SelectedRange> {
         match *selection {
             Selection::Unselected => None,
-            Selection::Begun { .. } => None,
-            Selection::Selecting { from, to, .. } => {
+            Selection::Begun { mode, pos } => match mode {
+                SelectionMode::Cell => None,
+                SelectionMode::Word => Some(SelectedRange::new(pos, pos)),
+            },
+            Selection::Selecting { mode, from, to, .. } => {
                 let to = self.hit_test_cell(to).into();
                 Some(SelectedRange::new(from, to))
             }
-            Selection::Selected { from, to, .. } => Some(SelectedRange::new(from, to)),
+            Selection::Selected { mode, from, to, .. } => Some(SelectedRange::new(from, to)),
         }
     }
 

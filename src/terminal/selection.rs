@@ -19,6 +19,7 @@ pub enum SelectionMode {
 pub enum Selection {
     #[default]
     Unselected,
+    // Architecture: Can't we move immediately to the Selecting mode here and skip Begun?
     Begun {
         mode: SelectionMode,
         pos: SelectionPos,
@@ -40,6 +41,15 @@ pub enum Selection {
 }
 
 impl Selection {
+    pub fn mode(&self) -> Option<SelectionMode> {
+        match *self {
+            Self::Unselected => None,
+            Self::Begun { mode, .. } => Some(mode),
+            Self::Selecting { mode, .. } => Some(mode),
+            Self::Selected { mode, .. } => Some(mode),
+        }
+    }
+
     pub fn begin(&mut self, mode: SelectionMode, pos: SelectionPos) {
         *self = Self::Begun { mode, pos }
     }
@@ -113,7 +123,13 @@ pub struct SelectionPos {
 
 impl PartialOrd for SelectionPos {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some((self.row, self.column).cmp(&(other.row, other.column)))
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SelectionPos {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.row, self.column).cmp(&(other.row, other.column))
     }
 }
 
@@ -142,11 +158,28 @@ pub struct SelectedRange {
 }
 
 impl SelectedRange {
+    pub fn span_of(a: Self, b: Self) -> Self {
+        let start = a.start.min(b.start);
+        let end = a.end.max(b.end);
+        Self { start, end }
+    }
+
     pub fn new(a: SelectionPos, b: SelectionPos) -> Self {
         if b >= a {
             Self { start: a, end: b }
         } else {
             Self { start: b, end: a }
+        }
+    }
+
+    pub fn extend(self, mode: SelectionMode, terminal: &Terminal) -> Option<Self> {
+        match mode {
+            SelectionMode::Cell => Some(self),
+            SelectionMode::Word => {
+                let range_a = word_around(self.start, terminal)?;
+                let range_b = word_around(self.end, terminal)?;
+                Some(Self::span_of(range_a, range_b))
+            }
         }
     }
 
@@ -212,14 +245,14 @@ impl SelectedRange {
         if start.row == end.row && start.column > end.column {
             return None;
         }
-        Some(SelectedRange::new(start, end))
+        Some(Self::new(start, end))
     }
 }
 
 // Copied from wezterm-gui/src/selection.rs
 
 /// Computes the selection range for the word around the specified coords
-pub fn word_around(terminal: &Terminal, start: SelectionPos) -> Option<SelectedRange> {
+pub fn word_around(start: SelectionPos, terminal: &Terminal) -> Option<SelectedRange> {
     for logical in get_logical_lines(terminal, start.row.with_len(1)) {
         if !logical.contains_y(start.row) {
             continue;
