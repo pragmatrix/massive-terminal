@@ -3,7 +3,6 @@
 //! This module provides a converter from `winit` keyboard events (0.30) to `termwiz`'s `KeyCode`
 //! (as used by `wezterm-term`).
 
-use massive_geometry::Point;
 use winit::{
     event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, TouchPhase, WindowEvent},
     keyboard::{Key, ModifiersState, NamedKey},
@@ -12,6 +11,7 @@ use winit::{
 use termwiz::input::{KeyCode, Modifiers};
 use wezterm_term::{MouseButton, MouseEventKind};
 
+use massive_geometry::Point;
 use massive_input::Event;
 
 /// Convert a full `winit` `KeyEvent` to a `(KeyCode, Modifiers)` pair.
@@ -184,17 +184,6 @@ pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, P
     Some((kind, button, pos))
 }
 
-fn convert_mouse_button(button: event::MouseButton) -> Option<MouseButton> {
-    match button {
-        event::MouseButton::Left => Some(MouseButton::Left),
-        event::MouseButton::Right => Some(MouseButton::Right),
-        event::MouseButton::Middle => Some(MouseButton::Middle),
-        event::MouseButton::Back => None,
-        event::MouseButton::Forward => None,
-        event::MouseButton::Other(_) => None,
-    }
-}
-
 fn mouse_button_pressed_on_device(ev: &Event, device_id: DeviceId) -> Option<MouseButton> {
     let (button, _) = ev
         .states()
@@ -205,6 +194,10 @@ fn mouse_button_pressed_on_device(ev: &Event, device_id: DeviceId) -> Option<Mou
         // ADR: Deciding to return the latest pressed one.
         .max_by_key(|(_, s)| s.when)?;
 
+    convert_mouse_button(*button)
+}
+
+fn convert_mouse_button(button: event::MouseButton) -> Option<MouseButton> {
     match button {
         event::MouseButton::Left => Some(MouseButton::Left),
         event::MouseButton::Right => Some(MouseButton::Right),
