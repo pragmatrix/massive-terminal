@@ -123,14 +123,11 @@ pub struct SelectedRange {
 }
 
 impl SelectedRange {
-    pub fn new(start: SelectionPos, end: SelectionPos) -> Self {
-        if end >= start {
-            Self { start, end }
+    pub fn new(a: SelectionPos, b: SelectionPos) -> Self {
+        if b >= a {
+            Self { start: a, end: b }
         } else {
-            Self {
-                start: end,
-                end: start,
-            }
+            Self { start: b, end: a }
         }
     }
 
