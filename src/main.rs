@@ -434,7 +434,7 @@ impl MassiveTerminal {
                     },
                     Some(movement) => {
                         if let Some(progress) = movement.track_to(&ev) {
-                            let progress = progress.map_or_cancel(window_pos_to_terminal_view);
+                            let progress = progress.try_map_or_cancel(window_pos_to_terminal_view);
 
                             self.presenter.selection_progress(&self.scene, progress);
                             if !self.presenter.selection_can_progress() {
