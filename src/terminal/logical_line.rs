@@ -1,6 +1,19 @@
 use std::ops::Range;
 
-use wezterm_term::{Line, StableRowIndex};
+use wezterm_term::{Line, StableRowIndex, Terminal};
+
+pub fn get_logical_lines(terminal: &Terminal, lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
+    let mut logical_lines = Vec::new();
+
+    terminal
+        .screen()
+        .for_each_logical_line_in_stable_range(lines, |stable_range, lines| {
+            logical_lines.push(LogicalLine::from_physical_range(stable_range, lines));
+            true
+        });
+
+    logical_lines
+}
 
 // Initially copied from wezterm's mux/src/pane.rs at 6a493f88fab06a792308e0c704790390fd3c6232
 // This is used for implementing copy based on a selection.
@@ -77,7 +90,9 @@ fn logical_from_physicals(physical_lines: &[&Line]) -> Line {
     let mut logical_line = Line::new(seqno);
 
     for physical_line in physical_lines {
-        logical_line.set_last_cell_was_wrapped(false, seqno);
+        if !logical_line.is_empty() {
+            logical_line.set_last_cell_was_wrapped(false, seqno);
+        }
         logical_line.append_line((*physical_line).clone(), seqno);
     }
 

@@ -1,6 +1,5 @@
 use std::{
     io::{self, ErrorKind},
-    ops::Range,
     sync::{self, Arc},
     time::{Duration, Instant},
 };
@@ -32,7 +31,6 @@ use massive_shell::{
 };
 
 mod input;
-mod logical_line;
 mod range_ops;
 mod terminal;
 mod window_geometry;
@@ -40,7 +38,6 @@ mod window_state;
 
 use crate::{
     input::termwiz::{convert_modifiers, convert_mouse_event},
-    logical_line::LogicalLine,
     range_ops::WithLength,
     terminal::*,
     window_geometry::{PixelPoint, WindowGeometry},
@@ -82,6 +79,9 @@ struct MassiveTerminal {
     terminal_scroller: TerminalScroller,
 
     // User state
+    //
+    // Architecture: The movement tracking here and the selection tracking in the presenter should
+    // probably be combined.
     selecting: Option<Movement>,
 
     #[debug(skip)]
@@ -91,6 +91,8 @@ struct MassiveTerminal {
 impl MassiveTerminal {
     async fn new(context: ApplicationContext) -> Result<Self> {
         let ids;
+        // ADR: A FontManager / FontSystem (perhaps with default fonts optionally) should probably
+        // be provided by the Shell.
         let mut font_system = {
             // In wasm the system locale can't be acquired. `sys_locale::get_locale()`
             let locale =
@@ -370,7 +372,7 @@ impl MassiveTerminal {
                     terminal
                         .screen_mut()
                         .for_each_logical_line_in_stable_range_mut(
-                            cell_pos.stable_row.with_len(1),
+                            cell_pos.row.with_len(1),
                             |_, lines| {
                                 Line::apply_hyperlink_rules(
                                     &config::DEFAULT_HYPERLINK_RULES,
@@ -415,19 +417,35 @@ impl MassiveTerminal {
 
                             presenter.selection_clear();
                         }
+                        Some(MouseGesture::DoubleClick(point)) => {
+                            if let Some(hit) = window_pos_to_terminal_view(point) {
+                                // Architecture: May create a MouseGesture::TripleClick instead?
+                                let mode = if self.presenter.selection_in_word_mode_and_selected() {
+                                    // This implicitly detects a triple click and then uses line selection.
+                                    SelectionMode::Line
+                                } else {
+                                    SelectionMode::Word
+                                };
+
+                                self.presenter.selection_begin(mode, hit);
+                                self.selecting = Some(ev.track_movement()
+                                    .expect("Internal error: double click gesture triggered without a mouse button event"));
+                            }
+                        }
                         Some(MouseGesture::Movement(movement)) => {
                             if let Some(hit) = window_pos_to_terminal_view(movement.from) {
-                                self.presenter.selection_begin(hit);
-                                self.selecting = Some(movement);
+                                self.presenter.selection_begin(SelectionMode::Cell, hit);
                             }
+                            self.selecting = Some(movement);
                         }
                         _ => {}
                     },
                     Some(movement) => {
                         if let Some(progress) = movement.track_to(&ev) {
-                            let progress = progress.map_or_cancel(window_pos_to_terminal_view);
+                            let progress = progress.try_map_or_cancel(window_pos_to_terminal_view);
 
-                            if !self.presenter.selection_progress(&self.scene, progress) {
+                            self.presenter.selection_progress(&self.scene, progress);
+                            if !self.presenter.selection_can_progress() {
                                 self.selecting = None;
                             }
                         }
@@ -511,7 +529,7 @@ impl MassiveTerminal {
         let cell_pos = geometry.hit_test_cell(point_on_view);
 
         let stable_top = terminal.screen().visible_row_to_stable_row(0);
-        let visible_row = cell_pos.stable_row - stable_top;
+        let visible_row = cell_pos.row - stable_top;
 
         let Some(column): Option<usize> = cell_pos.column.try_into().ok() else {
             return;
@@ -584,12 +602,16 @@ impl MassiveTerminal {
 impl MassiveTerminal {
     // Copied from wezterm_gui/src/termwindow/selection.rs
 
+    // Architecture: This does not seem to belong here, push this down to the presenter at least.
+    // Also it seems to lock the terminal multiple lines, see the current implementation of
+    // selected_range().
+
     /// Returns the selected text
     pub fn selected_text(&self) -> String {
         let mut s = String::new();
         // Feature: Rectangular selection.
         let rectangular = false;
-        let Some(sel) = self.presenter.selection_range() else {
+        let Some(sel) = self.presenter.selected_range() else {
             return s;
         };
         let mut last_was_wrapped = false;
@@ -598,7 +620,7 @@ impl MassiveTerminal {
 
         let terminal = self.terminal().lock();
 
-        for line in Self::get_logical_lines(&terminal, sel.stable_rows()) {
+        for line in get_logical_lines(&terminal, sel.stable_rows()) {
             if !s.is_empty() && !last_was_wrapped {
                 s.push('\n');
             }
@@ -628,19 +650,6 @@ impl MassiveTerminal {
         }
 
         s
-    }
-
-    fn get_logical_lines(terminal: &Terminal, lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
-        let mut logical_lines = Vec::new();
-
-        terminal
-            .screen()
-            .for_each_logical_line_in_stable_range(lines, |stable_range, lines| {
-                logical_lines.push(LogicalLine::from_physical_range(stable_range, lines));
-                true
-            });
-
-        logical_lines
     }
 }
 

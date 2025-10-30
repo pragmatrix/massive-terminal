@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
 use derive_more::Debug;
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 
 use massive_animation::TimeScale;
 use parking_lot::Mutex;
@@ -14,8 +14,8 @@ use crate::{
     TerminalView, WindowState,
     range_ops::{RangeOps, WithLength},
     terminal::{
-        NormalizedSelectionRange, ScreenGeometry, Selection, TerminalGeometry, TerminalViewParams,
-        ViewGeometry,
+        ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry,
+        TerminalViewParams, ViewGeometry,
     },
     window_geometry::PixelPoint,
 };
@@ -27,7 +27,8 @@ use massive_shell::Scene;
 #[derive(Debug)]
 pub struct TerminalPresenter {
     geometry: TerminalGeometry,
-    // Architecture: The presenter should probably act as a facade to the underlying terminal and not use a `Arc<Mutex<>>` here.
+    // Architecture: The presenter should probably act as a facade to the underlying terminal and
+    // not use a `Arc<Mutex<>>` here.
     #[debug(skip)]
     pub terminal: Arc<Mutex<Terminal>>,
 
@@ -165,7 +166,7 @@ impl TerminalPresenter {
                     .and_then(|cell| cell.attrs().hyperlink())
                     .map(|hyperlink| HighlightedHyperlink {
                         hyperlink: hyperlink.clone(),
-                        row: cell_pos.stable_row,
+                        row: cell_pos.row,
                     });
             }
 
@@ -273,8 +274,13 @@ impl TerminalPresenter {
             });
         }
 
+        // Gather everything from the terminal we need later.
+
         let cursor_pos = terminal.cursor_pos();
         let cursor_stable_y = screen_geometry.visible_range.start + cursor_pos.y as StableRowIndex;
+        let selected_range = view_geometry.selected_user_range(&self.selection);
+        let selected_range =
+            selected_range.and_then(|r| r.extend(self.selection.mode().unwrap(), &terminal));
 
         // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
         // changes can be pushed to it as fast as possible.
@@ -319,8 +325,7 @@ impl TerminalPresenter {
 
         // Update selection
         {
-            let selection_range = view_geometry.selection_range(&self.selection);
-            let selection_rows = selection_range.map(|s| s.stable_rows()).unwrap_or_default();
+            let selection_rows = selected_range.map(|s| s.stable_rows()).unwrap_or_default();
             let changes_intersect_with_selection =
                 changed_lines.iter().any(|l| selection_rows.contains(l));
 
@@ -329,7 +334,7 @@ impl TerminalPresenter {
                 self.selection.reset();
             }
             view_update.selection(
-                selection_range
+                selected_range
                     // The clamping is needed, otherwise we could keep too many matrix locations.
                     // Architecture: The clamping should happen in the view (there where the problem arises)
                     .and_then(|range| {
@@ -391,10 +396,30 @@ impl TerminalPresenter {
 // Selection
 
 impl TerminalPresenter {
-    pub fn selection_begin(&mut self, hit: PixelPoint) {
+    /// This way we can upgrade to a triple click / word selection.
+    ///
+    /// Architecture: I don't like this here, and should triple clicks be a mouse gesture, and not
+    /// detected by two double clicks in a row?
+    pub fn selection_in_word_mode_and_selected(&self) -> bool {
+        matches!(
+            self.selection,
+            Selection::Selected {
+                mode: SelectionMode::Word,
+                ..
+            }
+        )
+    }
+
+    pub fn selection_begin(&mut self, mode: SelectionMode, hit: PixelPoint) {
+        if self.selection != Selection::Unselected {
+            warn!(
+                "Selection begins with active selection {:?}",
+                self.selection
+            );
+        }
         self.selection_clear();
         self.selection
-            .begin(self.view_geometry().hit_test_cell(hit).into());
+            .begin(mode, hit, self.view_geometry().hit_test_cell(hit));
     }
 
     pub fn selection_clear(&mut self) {
@@ -404,12 +429,15 @@ impl TerminalPresenter {
 
     const PIXEL_TO_SCROLL_VELOCITY_PER_SECOND: f64 = 16.0;
 
-    pub fn selection_progress(&mut self, scene: &Scene, progress: Progress<PixelPoint>) -> bool {
-        if !self.selection.can_progress() {
-            return false;
-        }
+    pub fn selection_can_progress(&self) -> bool {
+        self.selection.can_progress()
+    }
 
-        let cont = match progress {
+    /// Returns false if selection can not progress (does not expect any).
+    pub fn selection_progress(&mut self, scene: &Scene, progress: Progress<PixelPoint>) {
+        assert!(self.selection.can_progress());
+
+        match progress {
             Progress::Proceed(view_hit) => {
                 // Scroll?
                 let pixel_velocity = self.geometry().scroll_distance_px(view_hit);
@@ -422,29 +450,26 @@ impl TerminalPresenter {
                     self.clear_selection_scroller()
                 }
 
-                self.selection.progress(view_hit)
+                self.selection.progress(view_hit);
             }
             Progress::Commit => {
                 self.clear_selection_scroller();
                 if let Some(end) = self.selection.selecting_end() {
                     let pos = self.view_geometry().hit_test_cell(end);
-                    self.selection.end(pos.into())
+                    self.selection.end(pos)
                 }
-                true
             }
-            Progress::Cancel => false,
+            Progress::Cancel => {
+                self.clear_selection_scroller();
+                self.selection.reset();
+            }
         };
-
-        if !cont {
-            self.clear_selection_scroller();
-            self.selection.reset()
-        }
-
-        cont
     }
 
-    pub fn selection_range(&self) -> Option<NormalizedSelectionRange> {
-        self.view_geometry().selection_range(&self.selection)
+    pub fn selected_range(&self) -> Option<SelectedRange> {
+        // Architecture: May be a SelectedUserRange can transport SelectionMode?
+        let range = self.view_geometry().selected_user_range(&self.selection);
+        range.and_then(|r| r.extend(self.selection.mode().unwrap(), &self.terminal.lock()))
     }
 
     pub fn view_geometry(&self) -> ViewGeometry {

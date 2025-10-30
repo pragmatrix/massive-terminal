@@ -5,6 +5,7 @@ use crate::terminal::TerminalGeometry;
 pub struct CellUnit;
 
 pub type CellRect = euclid::Rect<usize, CellUnit>;
+#[allow(unused)]
 pub type CellPoint = euclid::Point2D<usize, CellUnit>;
 
 pub struct PixelUnit;

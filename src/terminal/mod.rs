@@ -1,5 +1,6 @@
 mod font;
 mod geometry;
+mod logical_line;
 mod presenter;
 mod screen_geometry;
 mod scroll_locations;
@@ -10,6 +11,7 @@ mod view_geometry;
 
 pub use font::*;
 pub use geometry::*;
+pub use logical_line::*;
 pub use presenter::*;
 pub use screen_geometry::*;
 pub use scroller::*;

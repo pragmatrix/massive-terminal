@@ -1,14 +1,13 @@
 #![allow(unused)]
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
-use wezterm_term::{Cell, Screen, StableRowIndex};
+use euclid::Point2D;
+use wezterm_term::{Cell, Screen, StableRowIndex, Terminal};
 
 use crate::{
     range_ops::WithLength,
-    terminal::{
-        NormalizedSelectionRange, ScreenGeometry, Selection, SelectionRange, TerminalGeometry,
-    },
-    window_geometry::PixelPoint,
+    terminal::{ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry},
+    window_geometry::{CellUnit, PixelPoint},
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -47,16 +46,18 @@ impl ViewGeometry {
         self.terminal.terminal_size
     }
 
-    /// Computes the normalized selection range.
-    pub fn selection_range(&self, selection: &Selection) -> Option<NormalizedSelectionRange> {
+    /// Returns the currently selected user range.
+    ///
+    /// User range: _not_ extended by word / line boundaries, that area that was actually selected
+    /// using the mouse coordinates directly.
+    pub fn selected_user_range(&self, selection: &Selection) -> Option<SelectedRange> {
         match *selection {
             Selection::Unselected => None,
-            Selection::Begun { .. } => None,
-            Selection::Selecting { from, to } => {
-                let to = self.hit_test_cell(to).into();
-                Some(SelectionRange::new(from, to).normalized())
+            Selection::Selecting { mode, from, to, .. } => {
+                let to = self.hit_test_cell(to);
+                Some(SelectedRange::new(from, to))
             }
-            Selection::Selected { from, to } => Some(SelectionRange::new(from, to).normalized()),
+            Selection::Selected { mode, from, to, .. } => Some(SelectedRange::new(from, to)),
         }
     }
 
@@ -71,15 +72,15 @@ impl ViewGeometry {
 
         CellPos {
             column,
-            stable_row: row + self.stable_range.start,
+            row: row + self.stable_range.start,
         }
     }
 
     pub fn get_cell<'s>(&self, cell: CellPos, screen: &'s mut Screen) -> Option<&'s Cell> {
         let visible_start = screen.visible_row_to_stable_row(0);
         // Visible on our view.
-        if self.stable_range.contains(&cell.stable_row) && cell.column >= 0 {
-            let visible_y = cell.stable_row - visible_start;
+        if self.stable_range.contains(&cell.row) && cell.column >= 0 {
+            let visible_y = cell.row - visible_start;
             return screen
                 // Correctness: Does this actually hit on the column, may need to use visible_cells in Line instead?
                 .get_cell(cell.column.cast_unsigned(), visible_y as i64);
@@ -92,8 +93,30 @@ impl ViewGeometry {
 /// A cell position.
 ///
 /// Both values might be outside of the view's visibility or range.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct CellPos {
     pub column: isize,
-    pub stable_row: StableRowIndex,
+    pub row: StableRowIndex,
+}
+
+impl PartialOrd for CellPos {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CellPos {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.row, self.column).cmp(&(other.row, other.column))
+    }
+}
+
+impl CellPos {
+    pub fn new(column: isize, row: StableRowIndex) -> Self {
+        Self { column, row }
+    }
+
+    pub fn point(self) -> Point2D<isize, CellUnit> {
+        (self.column, self.row).into()
+    }
 }

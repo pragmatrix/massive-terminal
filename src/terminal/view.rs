@@ -10,6 +10,7 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
+use euclid::Point2D;
 use rangeset::RangeSet;
 use tuple::Map;
 
@@ -27,9 +28,7 @@ use super::TerminalGeometry;
 use crate::{
     TerminalFont,
     range_ops::{RangeOps, WithLength},
-    terminal::{
-        NormalizedSelectionRange, SelectionRange, ViewGeometry, scroll_locations::ScrollLocations,
-    },
+    terminal::{SelectedRange, ViewGeometry, scroll_locations::ScrollLocations},
     window_geometry::CellRect,
 };
 use massive_animation::{Animated, Interpolation};
@@ -314,7 +313,7 @@ impl ViewUpdate<'_> {
 
     pub fn selection(
         &mut self,
-        selection: Option<NormalizedSelectionRange>,
+        selection: Option<SelectedRange>,
         terminal_geometry: &TerminalGeometry,
     ) {
         self.view
@@ -779,14 +778,13 @@ impl TerminalView {
     fn update_selection(
         &mut self,
         scene: &Scene,
-        selection: Option<NormalizedSelectionRange>,
+        selection: Option<SelectedRange>,
         terminal_geometry: &TerminalGeometry,
     ) {
         match selection {
             Some(selection_range) => {
-                // Robustness: A selection can span a lot of lines here, even the ones outside. To
-                // keep the numerical stability in the matrix, we should clip the rects to the
-                // visible range.
+                // Robustness: A selection can span lines outside of the view range. To keep the
+                // numerical stability in the matrix, we should clip the rects to the visible range.
                 let rects_stable =
                     Self::selection_rects(&selection_range, terminal_geometry.columns());
                 let cell_size = terminal_geometry.cell_size_px.map(f64::from);
@@ -832,37 +830,59 @@ impl TerminalView {
     }
 
     /// A selection can be rendered in one to three rectangles.
-    fn selection_rects(selection: &SelectionRange, terminal_columns: usize) -> Vec<CellRect> {
-        debug_assert!(selection.end >= selection.start);
-        let start_point = selection.start.point();
-        let end_point = selection.end.point();
+    /// Robustness: Pass a clip rect here.
+    fn selection_rects(selection: &SelectedRange, terminal_columns: usize) -> Vec<CellRect> {
+        assert!(terminal_columns > 0);
 
-        let lines_covering = end_point.y + 1 - start_point.y;
-        debug_assert!(lines_covering > 0);
+        let min = Point2D::new(0, 0);
+        // Precision: Also clamp rows here?
+        let max = Point2D::new(terminal_columns as isize, isize::MAX);
 
-        if lines_covering == 1 {
-            return vec![CellRect::new(
+        // First convert to half-open intervals, then clamp the columns.
+        //
+        // This may result in an empty column range.
+        let start_point = selection
+            .start()
+            .point()
+            .clamp(min, max)
+            .map(|c| c as usize);
+        let end_point = selection
+            .end()
+            .point()
+            .map(|c| c.saturating_add(1))
+            .clamp(min, max)
+            .map(|c| c as usize);
+
+        let lines_covering = end_point.y - start_point.y;
+        assert!(lines_covering > 0);
+
+        // Performance: Capacity
+        let mut vecs = if lines_covering == 1 {
+            vec![CellRect::new(
                 start_point,
                 (end_point.x - start_point.x, 1).into(),
-            )];
-        }
+            )]
+        } else {
+            let top_line = CellRect::new(start_point, (terminal_columns - start_point.x, 1).into());
+            let bottom_line = CellRect::new((0, end_point.y - 1).into(), (end_point.x, 1).into());
 
-        let top_line = CellRect::new(start_point, (terminal_columns - start_point.x, 1).into());
+            if lines_covering == 2 {
+                vec![top_line, bottom_line]
+            } else {
+                vec![
+                    top_line,
+                    CellRect::new(
+                        (0, start_point.y + 1).into(),
+                        (terminal_columns, lines_covering - 2).into(),
+                    ),
+                    bottom_line,
+                ]
+            }
+        };
 
-        let bottom_line = CellRect::new((0, end_point.y).into(), (end_point.x + 1, 1).into());
-
-        if lines_covering == 2 {
-            return vec![top_line, bottom_line];
-        }
-
-        vec![
-            top_line,
-            CellRect::new(
-                (0, start_point.y + 1).into(),
-                (terminal_columns, lines_covering - 2).into(),
-            ),
-            bottom_line,
-        ]
+        // Some of the rects might be empty, because of clamping.
+        vecs.retain(|r| !r.is_empty());
+        vecs
     }
 }
 
