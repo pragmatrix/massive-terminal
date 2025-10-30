@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, ops::Range};
+use std::{cmp::Ordering, ops::Range, usize};
 
 use log::{error, warn};
 use wezterm_term::{DoubleClickRange, StableRowIndex, Terminal};
@@ -283,7 +283,7 @@ pub fn line_around(start: SelectionPos, terminal: &Terminal) -> Option<SelectedR
             return Some(SelectedRange {
                 start: SelectionPos::new(0, logical.first_row),
                 end: SelectionPos::new(
-                    usize::max_value(),
+                    usize::MAX,
                     logical.first_row + (logical.physical_lines.len() - 1) as StableRowIndex,
                 ),
             });
