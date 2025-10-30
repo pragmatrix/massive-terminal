@@ -258,10 +258,10 @@ pub fn word_around(pos: SelectionPos, terminal: &Terminal) -> Option<SelectedRan
         {
             DoubleClickRange::RangeWithWrap(click_range) | DoubleClickRange::Range(click_range) => {
                 let (start_y, start_x) = logical.logical_x_to_physical_coord(click_range.start);
-                let (end_y, end_x) = if click_range.end == 0 {
-                    (start_y, start_x)
-                } else {
+                let (end_y, end_x) = if !click_range.is_empty() {
                     logical.logical_x_to_physical_coord(click_range.end - 1)
+                } else {
+                    (start_y, start_x)
                 };
 
                 Some(SelectedRange::new(
