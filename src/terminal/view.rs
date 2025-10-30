@@ -782,9 +782,8 @@ impl TerminalView {
     ) {
         match selection {
             Some(selection_range) => {
-                // Robustness: A selection can span a lot of lines here, even the ones outside. To
-                // keep the numerical stability in the matrix, we should clip the rects to the
-                // visible range.
+                // Robustness: A selection can span lines outside of the view range. To keep the
+                // numerical stability in the matrix, we should clip the rects to the visible range.
                 let rects_stable =
                     Self::selection_rects(&selection_range, terminal_geometry.columns());
                 let cell_size = terminal_geometry.cell_size_px.map(f64::from);
@@ -840,13 +839,16 @@ impl TerminalView {
         if lines_covering == 1 {
             return vec![CellRect::new(
                 start_point,
-                (end_point.x - start_point.x, 1).into(),
+                (end_point.x + 1 - start_point.x, 1).into(),
             )];
         }
 
         let top_line = CellRect::new(start_point, (terminal_columns - start_point.x, 1).into());
 
-        let bottom_line = CellRect::new((0, end_point.y).into(), (end_point.x + 1, 1).into());
+        let bottom_line = CellRect::new(
+            (0, end_point.y).into(),
+            ((end_point.x + 1).min(terminal_columns), 1).into(),
+        );
 
         if lines_covering == 2 {
             return vec![top_line, bottom_line];

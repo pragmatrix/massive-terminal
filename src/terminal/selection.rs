@@ -252,20 +252,24 @@ impl SelectedRange {
 // Copied from wezterm-gui/src/selection.rs
 
 /// Computes the selection range for the word around the specified coords
-pub fn word_around(start: SelectionPos, terminal: &Terminal) -> Option<SelectedRange> {
-    for logical in get_logical_lines(terminal, start.row.with_len(1)) {
-        if !logical.contains_y(start.row) {
+pub fn word_around(pos: SelectionPos, terminal: &Terminal) -> Option<SelectedRange> {
+    for logical in get_logical_lines(terminal, pos.row.with_len(1)) {
+        if !logical.contains_y(pos.row) {
             continue;
         }
 
-        let start_idx = logical.xy_to_logical_x(start.column, start.row);
+        let start_idx = logical.xy_to_logical_x(pos.column, pos.row);
         return match logical
             .logical
             .compute_double_click_range(start_idx, is_double_click_word)
         {
             DoubleClickRange::RangeWithWrap(click_range) | DoubleClickRange::Range(click_range) => {
                 let (start_y, start_x) = logical.logical_x_to_physical_coord(click_range.start);
-                let (end_y, end_x) = logical.logical_x_to_physical_coord(click_range.end - 1);
+                let (end_y, end_x) = if click_range.end == 0 {
+                    (start_y, start_x)
+                } else {
+                    logical.logical_x_to_physical_coord(click_range.end - 1)
+                };
 
                 Some(SelectedRange::new(
                     SelectionPos::new(start_x, start_y),
