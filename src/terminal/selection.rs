@@ -192,7 +192,7 @@ impl SelectedRange {
 
     /// Yields a range representing the selected columns for the specified row.
     ///
-    /// The range may include usize::max_value() for some rows; this indicates that the selection
+    /// The range may include usize::MAX for some rows; this indicates that the selection
     /// extends to the end of that row. Since this struct has no knowledge of line length, it cannot
     /// be more precise than that.
     pub fn cols_for_row(&self, row: StableRowIndex, rectangular: bool) -> Range<usize> {
@@ -208,17 +208,19 @@ impl SelectedRange {
             _ if self.start.row == self.end.row => {
                 Self::column_range(self.start.column, self.end.column)
             }
-            _ if row == self.end.row => 0..self.end.column + 1,
+            // Saturating add because end.column might be usize::MAX (because of line selection)
+            _ if row == self.end.row => 0..self.end.column.saturating_add(1),
             _ if row == self.start.row => self.start.column..usize::MAX,
             _ => 0..usize::MAX,
         }
     }
 
     fn column_range(from: usize, to: usize) -> Range<usize> {
+        // Saturating add because input ranges might contain usize::MAX (because of line selection)
         if to >= from {
-            from..to + 1
+            from..to.saturating_add(1)
         } else {
-            to..from + 1
+            to..from.saturating_add(1)
         }
     }
 
