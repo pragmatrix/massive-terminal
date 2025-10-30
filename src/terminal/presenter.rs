@@ -166,7 +166,7 @@ impl TerminalPresenter {
                     .and_then(|cell| cell.attrs().hyperlink())
                     .map(|hyperlink| HighlightedHyperlink {
                         hyperlink: hyperlink.clone(),
-                        row: cell_pos.stable_row,
+                        row: cell_pos.row,
                     });
             }
 
@@ -419,7 +419,7 @@ impl TerminalPresenter {
         }
         self.selection_clear();
         self.selection
-            .begin(mode, hit, self.view_geometry().hit_test_cell(hit).into());
+            .begin(mode, hit, self.view_geometry().hit_test_cell(hit));
     }
 
     pub fn selection_clear(&mut self) {
@@ -456,7 +456,7 @@ impl TerminalPresenter {
                 self.clear_selection_scroller();
                 if let Some(end) = self.selection.selecting_end() {
                     let pos = self.view_geometry().hit_test_cell(end);
-                    self.selection.end(pos.into())
+                    self.selection.end(pos)
                 }
             }
             Progress::Cancel => {

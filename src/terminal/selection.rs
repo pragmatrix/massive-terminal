@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, ops::Range};
+use std::ops::Range;
 
 use log::{error, warn};
 use wezterm_term::{DoubleClickRange, StableRowIndex, Terminal};
@@ -6,7 +6,7 @@ use wezterm_term::{DoubleClickRange, StableRowIndex, Terminal};
 use crate::{
     range_ops::{RangeOps, WithLength},
     terminal::{CellPos, get_logical_lines},
-    window_geometry::{CellPoint, PixelPoint},
+    window_geometry::PixelPoint,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,13 +24,13 @@ pub enum Selection {
     // is scrolled, but the starting point always needs to point on the cell originally selected.
     Selecting {
         mode: SelectionMode,
-        from: SelectionPos,
+        from: CellPos,
         to: PixelPoint,
     },
     Selected {
         mode: SelectionMode,
-        from: SelectionPos,
-        to: SelectionPos,
+        from: CellPos,
+        to: CellPos,
     },
 }
 
@@ -43,7 +43,7 @@ impl Selection {
         }
     }
 
-    pub fn begin(&mut self, mode: SelectionMode, hit: PixelPoint, pos: SelectionPos) {
+    pub fn begin(&mut self, mode: SelectionMode, hit: PixelPoint, pos: CellPos) {
         *self = Self::Selecting {
             mode,
             from: pos,
@@ -81,7 +81,7 @@ impl Selection {
         }
     }
 
-    pub fn end(&mut self, to: SelectionPos) {
+    pub fn end(&mut self, to: CellPos) {
         *self = match &self {
             Self::Selecting { mode, from, .. } => Self::Selected {
                 mode: *mode,
@@ -103,48 +103,15 @@ impl Selection {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SelectionPos {
-    column: usize,
-    row: StableRowIndex,
-}
-
-impl PartialOrd for SelectionPos {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SelectionPos {
-    fn cmp(&self, other: &Self) -> Ordering {
-        (self.row, self.column).cmp(&(other.row, other.column))
-    }
-}
-
-impl From<CellPos> for SelectionPos {
-    fn from(value: CellPos) -> Self {
-        SelectionPos::new(value.column.max(0).cast_unsigned(), value.stable_row)
-    }
-}
-
-impl SelectionPos {
-    pub fn new(column: usize, row: StableRowIndex) -> Self {
-        Self { column, row }
-    }
-
-    pub fn point(&self) -> CellPoint {
-        assert!(self.row >= 0);
-        (self.column, self.row as usize).into()
-    }
-}
-
 /// Selection range.
 ///
-/// Always normalized and as a closed interval in both directions (this way it's never empty).
+/// Always end >= start and as a closed interval in both directions (this way it's never empty).
+///
+/// `start` and `end` may be completely out of range and represent the intent of user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedRange {
-    start: SelectionPos,
-    end: SelectionPos,
+    start: CellPos,
+    end: CellPos,
 }
 
 impl SelectedRange {
@@ -154,7 +121,7 @@ impl SelectedRange {
         Self { start, end }
     }
 
-    pub fn new(a: SelectionPos, b: SelectionPos) -> Self {
+    pub fn new(a: CellPos, b: CellPos) -> Self {
         if b >= a {
             Self { start: a, end: b }
         } else {
@@ -178,49 +145,59 @@ impl SelectedRange {
         }
     }
 
-    pub fn start(&self) -> &SelectionPos {
+    pub fn start(&self) -> &CellPos {
         &self.start
     }
 
-    pub fn end(&self) -> &SelectionPos {
+    pub fn end(&self) -> &CellPos {
         &self.end
     }
 
     pub fn stable_rows(&self) -> Range<StableRowIndex> {
-        self.start.row..self.end.row + 1
+        self.start.row..self.end.row.saturating_add(1)
     }
 
     /// Yields a range representing the selected columns for the specified row.
     ///
-    /// The range may include usize::MAX for some rows; this indicates that the selection
-    /// extends to the end of that row. Since this struct has no knowledge of line length, it cannot
-    /// be more precise than that.
+    /// The range may include isize::MAX for some rows; this indicates that the selection extends to
+    /// the end of that row.
+    ///
+    /// Since this struct has no knowledge of line length, it cannot be more precise than that.
+    ///
+    /// Architecture: This is conceptually similar to the computation of the actually visible Cell
+    /// rectangles of the selection.
     pub fn cols_for_row(&self, row: StableRowIndex, rectangular: bool) -> Range<usize> {
         match () {
             _ if rectangular => {
-                if row < self.start.row || row > self.end.row {
+                if !self.stable_rows().contains(&row) {
                     0..0
                 } else {
                     Self::column_range(self.start.column, self.end.column)
                 }
             }
-            _ if row < self.start.row || row > self.end.row => 0..0,
+            _ if !self.stable_rows().contains(&row) => 0..0,
             _ if self.start.row == self.end.row => {
                 Self::column_range(self.start.column, self.end.column)
             }
-            // Saturating add because end.column might be usize::MAX (because of line selection)
-            _ if row == self.end.row => 0..self.end.column.saturating_add(1),
-            _ if row == self.start.row => self.start.column..usize::MAX,
+            _ if row == self.end.row => Self::column_range(0, self.end.column),
+            _ if row == self.start.row => Self::column_range(self.start.column, isize::MAX),
             _ => 0..usize::MAX,
         }
     }
 
-    fn column_range(from: usize, to: usize) -> Range<usize> {
-        // Saturating add because input ranges might contain usize::MAX (because of line selection)
-        if to >= from {
+    fn column_range(from: isize, to: isize) -> Range<usize> {
+        // Saturating add because input ranges might contain isize::MAX (because of line selection)
+        let signed_range = if to >= from {
             from..to.saturating_add(1)
         } else {
             to..from.saturating_add(1)
+        };
+
+        // Convert to usize ranges.
+
+        Range {
+            start: signed_range.start.max(0) as usize,
+            end: signed_range.end.max(0) as usize,
         }
     }
 
@@ -237,7 +214,7 @@ impl SelectedRange {
         }
         if rows.end <= end.row {
             end.row = rows.end - 1;
-            end.column = columns - 1;
+            end.column = columns.cast_signed() - 1;
         }
         if start.row == end.row && start.column > end.column {
             return None;
@@ -249,13 +226,13 @@ impl SelectedRange {
 // Copied from wezterm-gui/src/selection.rs
 
 /// Computes the selection range for the word around the specified coords
-pub fn word_around(pos: SelectionPos, terminal: &Terminal) -> Option<SelectedRange> {
+pub fn word_around(pos: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
     for logical in get_logical_lines(terminal, pos.row.with_len(1)) {
         if !logical.contains_y(pos.row) {
             continue;
         }
 
-        let start_idx = logical.xy_to_logical_x(pos.column, pos.row);
+        let start_idx = logical.xy_to_logical_x(pos.column.max(0).cast_unsigned(), pos.row);
         return match logical
             .logical
             .compute_double_click_range(start_idx, is_double_click_word)
@@ -270,8 +247,8 @@ pub fn word_around(pos: SelectionPos, terminal: &Terminal) -> Option<SelectedRan
                 };
 
                 Some(SelectedRange::new(
-                    SelectionPos::new(start_x, start_y),
-                    SelectionPos::new(end_x, end_y),
+                    CellPos::new(start_x.cast_signed(), start_y),
+                    CellPos::new(end_x.cast_signed(), end_y),
                 ))
             }
         };
@@ -282,13 +259,13 @@ pub fn word_around(pos: SelectionPos, terminal: &Terminal) -> Option<SelectedRan
 }
 
 /// Computes the selection range for the line around the specified coords
-pub fn line_around(start: SelectionPos, terminal: &Terminal) -> Option<SelectedRange> {
+pub fn line_around(start: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
     for logical in get_logical_lines(terminal, start.row.with_len(1)) {
         if logical.contains_y(start.row) {
             return Some(SelectedRange {
-                start: SelectionPos::new(0, logical.first_row),
-                end: SelectionPos::new(
-                    usize::MAX,
+                start: CellPos::new(0, logical.first_row),
+                end: CellPos::new(
+                    isize::MAX,
                     logical.first_row + (logical.physical_lines.len() - 1) as StableRowIndex,
                 ),
             });

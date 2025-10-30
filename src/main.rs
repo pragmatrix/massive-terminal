@@ -372,7 +372,7 @@ impl MassiveTerminal {
                     terminal
                         .screen_mut()
                         .for_each_logical_line_in_stable_range_mut(
-                            cell_pos.stable_row.with_len(1),
+                            cell_pos.row.with_len(1),
                             |_, lines| {
                                 Line::apply_hyperlink_rules(
                                     &config::DEFAULT_HYPERLINK_RULES,
@@ -529,7 +529,7 @@ impl MassiveTerminal {
         let cell_pos = geometry.hit_test_cell(point_on_view);
 
         let stable_top = terminal.screen().visible_row_to_stable_row(0);
-        let visible_row = cell_pos.stable_row - stable_top;
+        let visible_row = cell_pos.row - stable_top;
 
         let Some(column): Option<usize> = cell_pos.column.try_into().ok() else {
             return;
