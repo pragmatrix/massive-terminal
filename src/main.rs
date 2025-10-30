@@ -419,7 +419,15 @@ impl MassiveTerminal {
                         }
                         Some(MouseGesture::DoubleClick(point)) => {
                             if let Some(hit) = window_pos_to_terminal_view(point) {
-                                self.presenter.selection_begin(SelectionMode::Word, hit);
+                                // Architecture: May create a MouseGesture::TripleClick instead?
+                                let mode = if self.presenter.selection_in_word_mode_and_selected() {
+                                    // This implicitly detects a triple click and then uses line selection.
+                                    SelectionMode::Line
+                                } else {
+                                    SelectionMode::Word
+                                };
+
+                                self.presenter.selection_begin(mode, hit);
                                 self.selecting = Some(ev.track_movement()
                                     .expect("Internal error: double click gesture triggered without a mouse button event"));
                             }

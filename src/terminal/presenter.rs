@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
 use derive_more::Debug;
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 
 use massive_animation::TimeScale;
 use parking_lot::Mutex;
@@ -396,7 +396,27 @@ impl TerminalPresenter {
 // Selection
 
 impl TerminalPresenter {
+    /// This way we can upgrade to a triple click / word selection.
+    ///
+    /// Architecture: I don't like this here, and should triple clicks be a mouse gesture, and not
+    /// detected by two double clicks in a row?
+    pub fn selection_in_word_mode_and_selected(&self) -> bool {
+        matches!(
+            self.selection,
+            Selection::Selected {
+                mode: SelectionMode::Word,
+                ..
+            }
+        )
+    }
+
     pub fn selection_begin(&mut self, mode: SelectionMode, hit: PixelPoint) {
+        if self.selection != Selection::Unselected {
+            warn!(
+                "Selection begins with active selection {:?}",
+                self.selection
+            );
+        }
         self.selection_clear();
         self.selection
             .begin(mode, hit, self.view_geometry().hit_test_cell(hit).into());

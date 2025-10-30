@@ -13,9 +13,10 @@ use crate::{
 pub enum SelectionMode {
     Cell,
     Word,
+    Line,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub enum Selection {
     #[default]
     Unselected,
@@ -145,7 +146,7 @@ pub struct SelectedRange {
 }
 
 impl SelectedRange {
-    pub fn span_of(a: Self, b: Self) -> Self {
+    pub fn boundary(a: Self, b: Self) -> Self {
         let start = a.start.min(b.start);
         let end = a.end.max(b.end);
         Self { start, end }
@@ -165,7 +166,12 @@ impl SelectedRange {
             SelectionMode::Word => {
                 let range_a = word_around(self.start, terminal)?;
                 let range_b = word_around(self.end, terminal)?;
-                Some(Self::span_of(range_a, range_b))
+                Some(Self::boundary(range_a, range_b))
+            }
+            SelectionMode::Line => {
+                let range_a = line_around(self.start, terminal)?;
+                let range_b = line_around(self.end, terminal)?;
+                Some(Self::boundary(range_a, range_b))
             }
         }
     }
@@ -266,7 +272,25 @@ pub fn word_around(pos: SelectionPos, terminal: &Terminal) -> Option<SelectedRan
         };
     }
 
-    error!("word_around: logical line does not contain stable row.");
+    error!("word_around: Logical line does not contain stable row.");
+    None
+}
+
+/// Computes the selection range for the line around the specified coords
+pub fn line_around(start: SelectionPos, terminal: &Terminal) -> Option<SelectedRange> {
+    for logical in get_logical_lines(terminal, start.row.with_len(1)) {
+        if logical.contains_y(start.row) {
+            return Some(SelectedRange {
+                start: SelectionPos::new(0, logical.first_row),
+                end: SelectionPos::new(
+                    usize::max_value(),
+                    logical.first_row + (logical.physical_lines.len() - 1) as StableRowIndex,
+                ),
+            });
+        }
+    }
+
+    error!("line_around: Logical line does not contain stable row.");
     None
 }
 

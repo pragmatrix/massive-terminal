@@ -836,19 +836,20 @@ impl TerminalView {
         let lines_covering = end_point.y + 1 - start_point.y;
         debug_assert!(lines_covering > 0);
 
+        // Detail: End point might be usize::MAX in case of line selections (I don't like this, but
+        // anyway).
+        let end_x = end_point.x.saturating_add(1).min(terminal_columns);
+
         if lines_covering == 1 {
             return vec![CellRect::new(
                 start_point,
-                (end_point.x + 1 - start_point.x, 1).into(),
+                (end_x - start_point.x, 1).into(),
             )];
         }
 
         let top_line = CellRect::new(start_point, (terminal_columns - start_point.x, 1).into());
 
-        let bottom_line = CellRect::new(
-            (0, end_point.y).into(),
-            ((end_point.x + 1).min(terminal_columns), 1).into(),
-        );
+        let bottom_line = CellRect::new((0, end_point.y).into(), (end_x, 1).into());
 
         if lines_covering == 2 {
             return vec![top_line, bottom_line];
