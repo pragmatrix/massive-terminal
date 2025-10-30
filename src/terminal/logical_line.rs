@@ -90,7 +90,9 @@ fn logical_from_physicals(physical_lines: &[&Line]) -> Line {
     let mut logical_line = Line::new(seqno);
 
     for physical_line in physical_lines {
-        logical_line.set_last_cell_was_wrapped(false, seqno);
+        if !logical_line.is_empty() {
+            logical_line.set_last_cell_was_wrapped(false, seqno);
+        }
         logical_line.append_line((*physical_line).clone(), seqno);
     }
 

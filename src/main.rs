@@ -91,6 +91,8 @@ struct MassiveTerminal {
 impl MassiveTerminal {
     async fn new(context: ApplicationContext) -> Result<Self> {
         let ids;
+        // ADR: A FontManager / FontSystem (perhaps with default fonts optionally) should probably
+        // be provided by the Shell.
         let mut font_system = {
             // In wasm the system locale can't be acquired. `sys_locale::get_locale()`
             let locale =
