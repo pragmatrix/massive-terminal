@@ -10,6 +10,7 @@ use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
     Wrap,
 };
+use euclid::{Point2D, Size2D};
 use rangeset::RangeSet;
 use tuple::Map;
 
@@ -830,26 +831,32 @@ impl TerminalView {
 
     /// A selection can be rendered in one to three rectangles.
     fn selection_rects(selection: &SelectedRange, terminal_columns: usize) -> Vec<CellRect> {
-        let start_point = selection.start().point();
-        let end_point = selection.end().point();
+        assert!(terminal_columns > 0);
 
-        let lines_covering = end_point.y + 1 - start_point.y;
-        debug_assert!(lines_covering > 0);
+        let max = Point2D::new(terminal_columns - 1, usize::MAX);
 
-        // Detail: End point might be usize::MAX in case of line selections (I don't like this, but
-        // anyway).
-        let end_x = end_point.x.saturating_add(1).min(terminal_columns);
+        // First clip the x values to the terminal columns (-1, because they are closed intervals)
+        // Then push the end-point by one so that we get half-open intervals.
+        let start_point = selection.start().point().min(max);
+        let end_point = selection
+            .end()
+            .point()
+            .min(max)
+            .add_size(&Size2D::new(1usize, 1usize));
+
+        let lines_covering = end_point.y - start_point.y;
+        assert!(lines_covering > 0);
 
         if lines_covering == 1 {
             return vec![CellRect::new(
                 start_point,
-                (end_x - start_point.x, 1).into(),
+                (end_point.x - start_point.x, 1).into(),
             )];
         }
 
         let top_line = CellRect::new(start_point, (terminal_columns - start_point.x, 1).into());
 
-        let bottom_line = CellRect::new((0, end_point.y).into(), (end_x, 1).into());
+        let bottom_line = CellRect::new((0, end_point.y - 1).into(), (end_point.x, 1).into());
 
         if lines_covering == 2 {
             return vec![top_line, bottom_line];

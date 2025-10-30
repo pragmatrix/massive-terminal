@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, ops::Range, usize};
+use std::{cmp::Ordering, ops::Range};
 
 use log::{error, warn};
 use wezterm_term::{DoubleClickRange, StableRowIndex, Terminal};
@@ -138,7 +138,9 @@ impl SelectionPos {
     }
 }
 
-/// Selection range. Always normalized.
+/// Selection range.
+///
+/// Always normalized and as a closed interval in both directions (this way it's never empty).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedRange {
     start: SelectionPos,
@@ -258,6 +260,7 @@ pub fn word_around(pos: SelectionPos, terminal: &Terminal) -> Option<SelectedRan
         {
             DoubleClickRange::RangeWithWrap(click_range) | DoubleClickRange::Range(click_range) => {
                 let (start_y, start_x) = logical.logical_x_to_physical_coord(click_range.start);
+                // Detail: Click_ranges are half-open, but we need to return closed ranges.
                 let (end_y, end_x) = if !click_range.is_empty() {
                     logical.logical_x_to_physical_coord(click_range.end - 1)
                 } else {
