@@ -45,9 +45,10 @@ impl ViewGeometry {
         self.terminal.terminal_size
     }
 
-    /// Computes the currently selected range.
+    /// Returns the currently selected user range.
     ///
-    /// This needs terminal for word selection.
+    /// User range: _not_ extended by word / line boundaries, that area that was actually selected
+    /// using the mouse coordinates directly.
     pub fn selected_user_range(&self, selection: &Selection) -> Option<SelectedRange> {
         match *selection {
             Selection::Unselected => None,
