@@ -51,10 +51,6 @@ impl ViewGeometry {
     pub fn selected_user_range(&self, selection: &Selection) -> Option<SelectedRange> {
         match *selection {
             Selection::Unselected => None,
-            Selection::Begun { mode, pos } => match mode {
-                SelectionMode::Cell => None,
-                SelectionMode::Word => Some(SelectedRange::new(pos, pos)),
-            },
             Selection::Selecting { mode, from, to, .. } => {
                 let to = self.hit_test_cell(to).into();
                 Some(SelectedRange::new(from, to))

@@ -399,7 +399,7 @@ impl TerminalPresenter {
     pub fn selection_begin(&mut self, mode: SelectionMode, hit: PixelPoint) {
         self.selection_clear();
         self.selection
-            .begin(mode, self.view_geometry().hit_test_cell(hit).into());
+            .begin(mode, hit, self.view_geometry().hit_test_cell(hit).into());
     }
 
     pub fn selection_clear(&mut self) {
@@ -409,12 +409,15 @@ impl TerminalPresenter {
 
     const PIXEL_TO_SCROLL_VELOCITY_PER_SECOND: f64 = 16.0;
 
-    pub fn selection_progress(&mut self, scene: &Scene, progress: Progress<PixelPoint>) -> bool {
-        if !self.selection.can_progress() {
-            return false;
-        }
+    pub fn selection_can_progress(&self) -> bool {
+        self.selection.can_progress()
+    }
 
-        let cont = match progress {
+    /// Returns false if selection can not progress (does not expect any).
+    pub fn selection_progress(&mut self, scene: &Scene, progress: Progress<PixelPoint>) {
+        assert!(self.selection.can_progress());
+
+        match progress {
             Progress::Proceed(view_hit) => {
                 // Scroll?
                 let pixel_velocity = self.geometry().scroll_distance_px(view_hit);
@@ -427,7 +430,7 @@ impl TerminalPresenter {
                     self.clear_selection_scroller()
                 }
 
-                self.selection.progress(view_hit)
+                self.selection.progress(view_hit);
             }
             Progress::Commit => {
                 self.clear_selection_scroller();
@@ -435,17 +438,12 @@ impl TerminalPresenter {
                     let pos = self.view_geometry().hit_test_cell(end);
                     self.selection.end(pos.into())
                 }
-                true
             }
-            Progress::Cancel => false,
+            Progress::Cancel => {
+                self.clear_selection_scroller();
+                self.selection.reset();
+            }
         };
-
-        if !cont {
-            self.clear_selection_scroller();
-            self.selection.reset()
-        }
-
-        cont
     }
 
     pub fn selected_range(&self) -> Option<SelectedRange> {

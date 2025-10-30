@@ -19,13 +19,6 @@ pub enum SelectionMode {
 pub enum Selection {
     #[default]
     Unselected,
-    // Architecture: Can't we move immediately to the Selecting mode here and skip Begun?
-    Begun {
-        mode: SelectionMode,
-        pos: SelectionPos,
-        // Architecture: nest Selecting and Selected under Begun and rename Begun to Active, this
-        // way we won't be duplicated mode and from?
-    },
     // We store the ending position as pixel point, because the selection might change when the view
     // is scrolled, but the starting point always needs to point on the cell originally selected.
     Selecting {
@@ -44,28 +37,25 @@ impl Selection {
     pub fn mode(&self) -> Option<SelectionMode> {
         match *self {
             Self::Unselected => None,
-            Self::Begun { mode, .. } => Some(mode),
             Self::Selecting { mode, .. } => Some(mode),
             Self::Selected { mode, .. } => Some(mode),
         }
     }
 
-    pub fn begin(&mut self, mode: SelectionMode, pos: SelectionPos) {
-        *self = Self::Begun { mode, pos }
+    pub fn begin(&mut self, mode: SelectionMode, hit: PixelPoint, pos: SelectionPos) {
+        *self = Self::Selecting {
+            mode,
+            from: pos,
+            to: hit,
+        }
     }
 
     pub fn can_progress(&self) -> bool {
-        matches!(self, Self::Begun { .. } | Self::Selecting { .. })
+        matches!(self, Self::Selecting { .. })
     }
 
-    #[must_use]
-    pub fn progress(&mut self, end: PixelPoint) -> bool {
+    pub fn progress(&mut self, end: PixelPoint) {
         *self = match &self {
-            Self::Begun { mode, pos } => Self::Selecting {
-                mode: *mode,
-                from: *pos,
-                to: end,
-            },
             Self::Selecting {
                 mode, from: start, ..
             } => Self::Selecting {
@@ -79,8 +69,6 @@ impl Selection {
                 Self::Unselected
             }
         };
-
-        self.can_progress()
     }
 
     /// Ends the selection and returns the pixel point the cursor was last at.
@@ -94,7 +82,6 @@ impl Selection {
 
     pub fn end(&mut self, to: SelectionPos) {
         *self = match &self {
-            Self::Begun { .. } => Self::Unselected,
             Self::Selecting { mode, from, .. } => Self::Selected {
                 mode: *mode,
                 from: *from,
