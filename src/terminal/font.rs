@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use cosmic_text::Font;
+use swash::StringId;
 
 /// A monospaced, terminal font of a certain size.
 #[allow(unused)]
@@ -39,50 +40,57 @@ pub struct LineMetrics {
     pub thickness: u32,
 }
 
+const MONOSPACE_WIDTH_CHARACTER: char = '0';
+
 impl TerminalFont {
     pub fn from_cosmic_text(font: Arc<Font>, size: f32) -> Result<Self> {
-        let hb_font = font.rustybuzz();
-
-        let family_name = hb_font
-            .names()
-            .into_iter()
-            .find(|n| n.name_id == 1)
+        let family_name = font
+            .as_swash()
+            .localized_strings()
+            .find_by_id(StringId::Family, None)
             .ok_or(anyhow!("Failed to get family name from font (name id 1)"))?
-            .to_string()
-            .ok_or(anyhow!("Only unicode family names are supported (yet)"))?;
+            .to_string();
+        let swash = font.as_swash();
 
-        if !hb_font.is_monospaced() {
+        // Feature: May be use swash metrics directly?
+        // let swash_metrics = swash.metrics(&[]);
+
+        let metrics = font.metrics();
+
+        if !metrics.is_monospace {
             bail!("Terminal fonts must be monospaced");
         }
 
-        if hb_font.line_gap() != 0 {
+        // Robustness: Reimplement this
+        // if hb_font.line_gap() != 0 {
+        //     bail!("Monospace fonts with a line gap aren't supported (yet)")
+        // }
+
+        // We make ascender and descender larger (ceil), so that the font always fits in.
+        let ascender_em = to_em_unsigned(metrics.ascent, "ascender")?;
+
+        // By convention, descender is negative, but we treat it as positive.
+        let descender_em = to_em_unsigned(-metrics.descent, "descender")?;
+
+        // Line gaps / leading may be negative. For now, we want to know about this.
+        let line_gap = to_em_unsigned(metrics.leading, "line gap / leading")?;
+
+        if line_gap != 0 {
             bail!("Monospace fonts with a line gap aren't supported (yet)")
         }
 
-        let ascender_em: u32 = hb_font
-            .ascender()
-            .try_into()
-            .context("Unexpected font ascender")?;
-        let descender_em: u32 = (-hb_font.descender())
-            .try_into()
-            .context("Unexpected font descender")?;
+        // monospace_em_width() may be an alternative, but it wasn't available for JetBrains Mono.
 
-        let (glyph_width_em, glyph_height_em) = {
-            let glyph_width = {
-                let glyph_index = hb_font
-                    .glyph_index('M')
-                    .ok_or(anyhow!("Retrieving glyph `M` failed"))?;
-                let advance: u16 = hb_font
-                    .glyph_hor_advance(glyph_index)
-                    .ok_or(anyhow!("Getting the advance of the letter `M` failed"))?;
-                advance as u32
-            };
-            // Naming: This is font_height, not glyph height.
-            let glyph_height: u32 = hb_font.height().try_into().context("Font height")?;
-            (glyph_width, glyph_height)
-        };
+        let m_id = swash.charmap().map(MONOSPACE_WIDTH_CHARACTER);
+        let gm = swash.glyph_metrics(&[]);
+        let glyph_width_em = to_em_unsigned(
+            gm.advance_width(m_id),
+            "advance with of monospace width defining character",
+        )?;
+        // Detail: Keep line gap here even though it's currently always 0.
+        let glyph_height_em = ascender_em + descender_em + line_gap;
 
-        let units_per_em = hb_font.units_per_em();
+        let units_per_em = metrics.units_per_em;
         let units_per_em_f = units_per_em as f32;
         let font_size_f = size / units_per_em_f;
 
@@ -101,13 +109,13 @@ impl TerminalFont {
 
         let descender_px = cell_pixel_size.1 - ascender_px;
 
-        let underline_px = if let Some(underline_metrics) = hb_font.underline_metrics() {
+        let underline_px = if let Some(underline_metrics) = metrics.underline {
             // Precision: Make sure that the underline fits in the cell.
             LineMetrics {
-                position: ((glyph_height_em as i32 + underline_metrics.position as i32) as f32
+                position: ((glyph_height_em.cast_signed() + underline_metrics.offset as i32) as f32
                     * font_size_f)
                     .trunc() as u32,
-                thickness: ((underline_metrics.thickness as f32 * font_size_f) as u32).max(1),
+                thickness: ((underline_metrics.thickness * font_size_f) as u32).max(1),
             }
         } else {
             LineMetrics {
@@ -127,7 +135,7 @@ impl TerminalFont {
             font,
             family_name,
             size,
-            units_per_em: units_per_em.try_into().context("units per em")?,
+            units_per_em: units_per_em as u32,
             ascender_em,
             descender_em,
             glyph_advance_em: glyph_width_em,
@@ -147,4 +155,12 @@ impl TerminalFont {
     pub fn font_height_px(&self) -> u32 {
         self.ascender_px + self.descender_px
     }
+}
+
+fn to_em_unsigned(value: f32, value_type: &str) -> Result<u32> {
+    // Detail: Use round(), this is to compensate for internal inaccuracies. Internally fonts store
+    // design units as integers.
+    (value.round() as i32).try_into().with_context(|| {
+        format!("Failed to convert em font value `{value_type}` from f32 to a positive integer")
+    })
 }

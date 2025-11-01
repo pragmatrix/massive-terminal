@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Result, bail};
 use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
-    Wrap,
+    Wrap, fontdb,
 };
 use euclid::Point2D;
 use rangeset::RangeSet;
@@ -557,6 +557,9 @@ impl TerminalView {
         // Robustness: Shouldn't this be always equal the number of line glyphs?
         let mut cell_width = 0;
 
+        let text_weight = attributes.text_weight();
+        let font_weight = fontdb::Weight(text_weight.0);
+
         for glyph in &line.glyphs {
             // Compute the discrete x offset and pixel position.
             // Robustness: Report unexpected variance here (> 0.001 ?)
@@ -581,6 +584,7 @@ impl TerminalView {
                     font_size_bits: font.size.to_bits(),
                     x_bin: SubpixelBin::Zero,
                     y_bin: SubpixelBin::Zero,
+                    font_weight,
                     flags: glyph.cache_key_flags,
                 },
             };
@@ -597,7 +601,7 @@ impl TerminalView {
                 width: (cell_width * font.glyph_advance_px),
             },
             text_color: attributes.foreground_color,
-            text_weight: attributes.text_weight(),
+            text_weight,
             glyphs,
         };
 

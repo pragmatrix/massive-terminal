@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Result, anyhow, bail};
 use arboard::Clipboard;
-use cosmic_text::{FontSystem, fontdb};
+use cosmic_text::{FontSystem, Weight, fontdb};
 use derive_more::Debug;
 use log::{debug, info, trace, warn};
 use parking_lot::Mutex;
@@ -105,7 +105,8 @@ impl MassiveTerminal {
             FontSystem::new_with_locale_and_db(locale, font_db)
         };
 
-        let font = font_system.get_font(ids[0]).unwrap();
+        // This font is only used for measuring the size of the terminal upfront.
+        let font = font_system.get_font(ids[0], Weight::NORMAL).unwrap();
 
         let scale_factor = context.primary_monitor_scale_factor().unwrap_or(1.0);
         let font_size = DEFAULT_FONT_SIZE * scale_factor as f32;

@@ -40,6 +40,7 @@ parking_lot.workspace = true
 portable-pty.workspace = true
 rangeset.workspace = true
 sys-locale.workspace = true
+swash.workspace = true
 termwiz.workspace = true
 tokio-util.workspace = true
 tokio.workspace = true
@@ -65,7 +66,7 @@ approx = "0.5.1"
 arboard = { version = "3.6.1" }
 bytemuck = { version = "1.13.1", features = ["derive"] }
 cgmath = { version = "0.18.0" }
-cosmic-text = { version = "0.14.2", features = ["swash"] }
+cosmic-text = { version = "0.15.0", features = ["swash"] }
 derive_more = { version = "2.0.1", features = ["full"] }
 env_logger = "0.11.3"
 flo_curves = "0.8.0"
@@ -131,6 +132,7 @@ pest_derive = "2.7"
 phf = { version = "0.11", default-features = false }
 proc-macro2 = "1.0"
 quote = "1.0.2"
+replace_with = "0.1.8"
 serial2 = "0.2"
 sha2 = "0.10"
 shared_library = "0.1"
