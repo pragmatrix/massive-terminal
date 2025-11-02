@@ -6,6 +6,7 @@
         "cgmath",
         "conpty",
         "multiview",
+        "Noto",
         "openpty",
         "preedit",
         "rangeset",
