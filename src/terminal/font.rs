@@ -5,6 +5,8 @@ use cosmic_text::Font;
 use swash::StringId;
 
 /// A monospaced, terminal font of a certain size.
+///
+/// Ergonomics: Separate metrics from font.
 #[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct TerminalFont {

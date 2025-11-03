@@ -15,7 +15,7 @@ use crate::{
     range_ops::{RangeOps, WithLength},
     terminal::{
         ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry,
-        TerminalViewParams, ViewGeometry,
+        TerminalViewParams, ViewGeometry, cursor::CursorMetrics,
     },
     window_geometry::PixelPoint,
 };
@@ -276,8 +276,9 @@ impl TerminalPresenter {
 
         // Gather everything from the terminal we need later.
 
-        let cursor_pos = terminal.cursor_pos();
-        let cursor_stable_y = screen_geometry.visible_range.start + cursor_pos.y as StableRowIndex;
+        // Performance: Don't compute metrics if cursor hasn't changed.
+        let cursor_metrics = CursorMetrics::new(&mut terminal, &screen_geometry, window_state);
+
         let selected_range = view_geometry.selected_user_range(&self.selection);
         let selected_range =
             selected_range.and_then(|r| r.extend(self.selection.mode().unwrap(), &terminal));
@@ -319,9 +320,9 @@ impl TerminalPresenter {
             self.temporary_line_buf.clear();
         }
 
-        // Update cursor
+        // Update cursor.
 
-        view_update.cursor(cursor_pos, cursor_stable_y, window_state.focused);
+        view_update.cursor(cursor_metrics);
 
         // Update selection
         {

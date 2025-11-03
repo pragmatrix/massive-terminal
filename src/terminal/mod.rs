@@ -1,3 +1,4 @@
+mod cursor;
 mod font;
 mod geometry;
 mod logical_line;

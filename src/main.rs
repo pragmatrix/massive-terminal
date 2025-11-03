@@ -51,9 +51,6 @@ const DEFAULT_FONT_SIZE: f32 = 13.;
 const DEFAULT_TERMINAL_SIZE: (usize, usize) = (80 * 2, 24 * 2);
 const APPLICATION_NAME: &str = "Massive Terminal";
 
-const JETBRAINS_MONO: &[u8] =
-    include_bytes!("fonts/JetBrainsMono-2.304/fonts/variable/JetBrainsMono[wght].ttf");
-
 #[tokio::main]
 async fn main() -> Result<()> {
     shell::run(async |ctx| MassiveTerminal::new(ctx).await?.run().await)
@@ -90,7 +87,7 @@ struct MassiveTerminal {
 
 impl MassiveTerminal {
     async fn new(context: ApplicationContext) -> Result<Self> {
-        let ids;
+        let primary_font_ids;
         // ADR: A FontManager / FontSystem (perhaps with default fonts optionally) should probably
         // be provided by the Shell.
         let mut font_system = {
@@ -98,15 +95,28 @@ impl MassiveTerminal {
             let locale =
                 sys_locale::get_locale().ok_or(anyhow!("Failed to retrieve current locale"))?;
 
-            // Don't load system fonts for now, this way we get the same result on wasm and local runs.
             let mut font_db = fontdb::Database::new();
-            let source = fontdb::Source::Binary(Arc::new(JETBRAINS_MONO));
-            ids = font_db.load_font_source(source);
+            font_db.load_system_fonts();
+
+            let mut load_font = |font: &'static [u8]| {
+                let source = fontdb::Source::Binary(Arc::new(font));
+                font_db.load_font_source(source)
+            };
+
+            // Don't load system fonts for now, this way we get the same result on wasm and local runs.
+
+            const JETBRAINS_MONO: &[u8] =
+                include_bytes!("fonts/JetBrainsMono-2.304/fonts/variable/JetBrainsMono[wght].ttf");
+
+            primary_font_ids = load_font(JETBRAINS_MONO);
+
             FontSystem::new_with_locale_and_db(locale, font_db)
         };
 
         // This font is only used for measuring the size of the terminal upfront.
-        let font = font_system.get_font(ids[0], Weight::NORMAL).unwrap();
+        let font = font_system
+            .get_font(primary_font_ids[0], Weight::NORMAL)
+            .unwrap();
 
         let scale_factor = context.primary_monitor_scale_factor().unwrap_or(1.0);
         let font_size = DEFAULT_FONT_SIZE * scale_factor as f32;

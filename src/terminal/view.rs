@@ -14,21 +14,18 @@ use euclid::Point2D;
 use rangeset::RangeSet;
 use tuple::Map;
 
-use termwiz::{
-    cellcluster::CellCluster,
-    color::ColorAttribute,
-    surface::{CursorShape, CursorVisibility},
-};
+use termwiz::{cellcluster::CellCluster, color::ColorAttribute, surface::CursorShape};
 use wezterm_term::{
-    CellAttributes, CursorPosition, Hyperlink, Intensity, Line, StableRowIndex, Underline,
-    color::ColorPalette,
+    CellAttributes, Hyperlink, Intensity, Line, StableRowIndex, Underline, color::ColorPalette,
 };
 
 use super::TerminalGeometry;
 use crate::{
     TerminalFont,
     range_ops::{RangeOps, WithLength},
-    terminal::{SelectedRange, ViewGeometry, scroll_locations::ScrollLocations},
+    terminal::{
+        SelectedRange, ViewGeometry, cursor::CursorMetrics, scroll_locations::ScrollLocations,
+    },
     window_geometry::CellRect,
 };
 use massive_animation::{Animated, Interpolation};
@@ -306,9 +303,8 @@ impl ViewUpdate<'_> {
         )
     }
 
-    pub fn cursor(&mut self, pos: CursorPosition, stable: StableRowIndex, window_focused: bool) {
-        self.view
-            .update_cursor(self.scene, pos, stable, window_focused);
+    pub fn cursor(&mut self, metrics: Option<CursorMetrics>) {
+        self.view.update_cursor(self.scene, metrics);
     }
 
     pub fn selection(
@@ -474,6 +470,7 @@ impl TerminalView {
         // Performance: Can we use some capacity here? Use a temporary array here?
         let mut overlay_shapes = Vec::new();
         let mut left = 0;
+        let cell_size_px = self.font().cell_size_px().0 as i64;
 
         // Optimization: Combine clusters with compatible attributes. Colors and widths can vary
         // inside a GlyphRun.
@@ -499,7 +496,6 @@ impl TerminalView {
             );
 
             if let Some(run) = run {
-                left += cluster.width as i64 * self.font().cell_size_px().0 as i64;
                 shapes.push(run.into());
             }
 
@@ -510,6 +506,8 @@ impl TerminalView {
             if let Some(overlay) = overlay {
                 overlay_shapes.push(overlay);
             }
+
+            left += cluster.width as i64 * cell_size_px;
         }
 
         Ok((shapes, overlay_shapes))
@@ -535,9 +533,19 @@ impl TerminalView {
 
         let units_per_em_f = font.units_per_em as f32;
 
+        // Performance: If we don't wrap, isn't a call to buffer.shape() enough?
+        //
         // ADR: We lay out in em units so that positioning information can be processed and compared in
         // discrete units and perhaps even cached better.
-        let lines = buffer.layout(font_system, units_per_em_f, None, Wrap::None, None, 0);
+        let lines = buffer.layout(
+            font_system,
+            units_per_em_f,
+            None,
+            Wrap::None,
+            // Match mono width does not seem to have an effect at all.
+            None,
+            0,
+        );
         let line = match lines.len() {
             0 => return Ok(None),
             1 => &lines[0],
@@ -546,29 +554,15 @@ impl TerminalView {
             }
         };
 
-        // Cosmic text provides fractional positions, but we need to align every character directly on a
-        // pixel grid, so start with 0 for now.
-        //
-        // Robustness: scale everything up so that while layout EM positions are used
-        // to exactly map them to the pixel grid.
-
         let mut glyphs = Vec::with_capacity(line.glyphs.len());
-
-        // Robustness: Shouldn't this be always equal the number of line glyphs?
-        let mut cell_width = 0;
 
         let text_weight = attributes.text_weight();
         let font_weight = fontdb::Weight(text_weight.0);
 
         for glyph in &line.glyphs {
-            // Compute the discrete x offset and pixel position.
-            // Robustness: Report unexpected variance here (> 0.001 ?)
-            let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as u32;
-            let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as u32;
-            let glyph_x = glyph_index * font.glyph_advance_px;
-
-            // Optimization: Compute this only once.
-            cell_width = glyph_index + glyph_index_width;
+            // We place the glyphs based on what the cluster says.
+            let cell_index = cluster.byte_to_cell_idx(glyph.start) - cluster.first_cell_idx;
+            let glyph_x = cell_index as u32 * font.glyph_advance_px;
 
             // Optimization: Don't pass empty glyphs.
             let glyph = RunGlyph {
@@ -598,7 +592,7 @@ impl TerminalView {
                 // size.
                 max_ascent: font.ascender_px,
                 max_descent: font.descender_px,
-                width: (cell_width * font.glyph_advance_px),
+                width: (cluster.width as u32 * font.glyph_advance_px),
             },
             text_color: attributes.foreground_color,
             text_weight,
@@ -697,25 +691,16 @@ enum CursorShapeType {
 }
 
 impl TerminalView {
-    fn update_cursor(
-        &mut self,
-        scene: &Scene,
-        pos: CursorPosition,
-        stable: StableRowIndex,
-        window_focused: bool,
-    ) {
-        match pos.visibility {
-            CursorVisibility::Hidden => {
-                self.cursor = None;
-            }
-            CursorVisibility::Visible => {
-                let shape_type = Self::cursor_shape_type(pos.shape, window_focused);
-                // Detail: pos.y is a VisibleRowIndex.
-                let (location, top_px) = self.locations.acquire_line_location(scene, stable);
-                let shape = self.cursor_shape(shape_type, pos.x, top_px);
-                self.cursor = Some(scene.stage(Visual::new(location, [shape])));
-            }
-        }
+    fn update_cursor(&mut self, scene: &Scene, cursor_metrics: Option<CursorMetrics>) {
+        self.cursor = cursor_metrics.map(|metrics| {
+            let shape_type = Self::cursor_shape_type(metrics.pos.shape, metrics.focused);
+            // Detail: pos.y is a VisibleRowIndex.
+            let (location, top_px) = self
+                .locations
+                .acquire_line_location(scene, metrics.stable_y);
+            let shape = self.cursor_shape(shape_type, metrics.pos.x, metrics.width, top_px);
+            scene.stage(Visual::new(location, [shape]))
+        })
     }
 
     fn cursor_shape_type(shape: CursorShape, focused: bool) -> CursorShapeType {
@@ -734,7 +719,13 @@ impl TerminalView {
         }
     }
 
-    fn cursor_shape(&self, ty: CursorShapeType, column: usize, y_offset_px: i64) -> Shape {
+    fn cursor_shape(
+        &self,
+        ty: CursorShapeType,
+        column: usize,
+        width: usize,
+        y_offset_px: i64,
+    ) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font().cell_size_px();
         let left = cell_size.0 * column as u32;
@@ -743,12 +734,14 @@ impl TerminalView {
         // position / thickness, not from the cell size.
         let stroke_thickness = ((cell_size.0 as f64 / 4.) + 1.).trunc();
 
+        let cell_width = cell_size.0 * width as u32;
+
         let rect = match ty {
             CursorShapeType::Rect => {
                 return StrokeRect::new(
                     Rect::new(
                         (left as _, y_offset_px as _),
-                        (cell_size.0 as _, cell_size.1 as _),
+                        (cell_width as _, cell_size.1 as _),
                     ),
                     Size::new(stroke_thickness, stroke_thickness),
                     color::from_srgba(cursor_color),
@@ -757,17 +750,18 @@ impl TerminalView {
             }
             CursorShapeType::Block => Rect::new(
                 (left as _, y_offset_px as _),
-                (cell_size.0 as _, cell_size.1 as _),
+                (cell_width as _, cell_size.1 as _),
             ),
             CursorShapeType::Underline => Rect::new(
                 (
                     left as _,
                     ((y_offset_px + self.font().ascender_px as i64) as f64) as _,
                 ),
-                (cell_size.0 as _, stroke_thickness),
+                (cell_width as _, stroke_thickness),
             ),
             CursorShapeType::Bar => Rect::new(
                 (left as _, y_offset_px as _),
+                // Ergonomics: Shouldn't we multiply stroke_thickness with width?
                 (stroke_thickness, cell_size.1 as _),
             ),
         };
