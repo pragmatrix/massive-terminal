@@ -5,7 +5,7 @@ use wezterm_term::{DoubleClickRange, StableRowIndex, Terminal};
 
 use crate::{
     range_ops::{RangeOps, WithLength},
-    terminal::{CellPos, get_logical_lines},
+    terminal::{CellPos, LogicalLine, get_logical_lines},
     window_geometry::PixelPoint,
 };
 
@@ -131,7 +131,11 @@ impl SelectedRange {
 
     pub fn extend(self, mode: SelectionMode, terminal: &Terminal) -> Option<Self> {
         match mode {
-            SelectionMode::Cell => Some(self),
+            SelectionMode::Cell => {
+                let range_a = cell_around(self.start, terminal)?;
+                let range_b = cell_around(self.end, terminal)?;
+                Some(Self::boundary(range_a, range_b))
+            }
             SelectionMode::Word => {
                 let range_a = word_around(self.start, terminal)?;
                 let range_b = word_around(self.end, terminal)?;
@@ -223,6 +227,34 @@ impl SelectedRange {
     }
 }
 
+pub fn cell_around(pos: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
+    // Performance: I am not sure if going through the logical line is needed just to find out if
+    // the cell at pos or one before is a double-width cell.
+    for logical in get_logical_lines(terminal, pos.row.with_len(1)) {
+        if !logical.contains_y(pos.row) {
+            continue;
+        }
+
+        let start_idx = logical.xy_to_logical_x(pos.column.max(0).cast_unsigned(), pos.row);
+
+        for cell in logical.logical.visible_cells() {
+            let click_range = cell.cell_index().with_len(cell.width());
+            if click_range.contains(&start_idx) {
+                return Some(click_range_to_selected_range(&logical, click_range));
+            }
+        }
+
+        // outside of the line's range.
+        return Some(SelectedRange {
+            start: pos,
+            end: pos,
+        });
+    }
+
+    warn!("cell_around: Logical line does not contain stable row.");
+    None
+}
+
 // Copied from wezterm-gui/src/selection.rs
 
 /// Computes the selection range for the word around the specified coords
@@ -238,24 +270,31 @@ pub fn word_around(pos: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
             .compute_double_click_range(start_idx, is_double_click_word)
         {
             DoubleClickRange::RangeWithWrap(click_range) | DoubleClickRange::Range(click_range) => {
-                let (start_y, start_x) = logical.logical_x_to_physical_coord(click_range.start);
-                // Detail: Click_ranges are half-open, but we need to return closed ranges.
-                let (end_y, end_x) = if !click_range.is_empty() {
-                    logical.logical_x_to_physical_coord(click_range.end - 1)
-                } else {
-                    (start_y, start_x)
-                };
-
-                Some(SelectedRange::new(
-                    CellPos::new(start_x.cast_signed(), start_y),
-                    CellPos::new(end_x.cast_signed(), end_y),
-                ))
+                Some(click_range_to_selected_range(&logical, click_range))
             }
         };
     }
 
-    error!("word_around: Logical line does not contain stable row.");
+    warn!("word_around: Logical line does not contain stable row.");
     None
+}
+
+fn click_range_to_selected_range(
+    logical: &LogicalLine,
+    click_range: Range<usize>,
+) -> SelectedRange {
+    let (start_y, start_x) = logical.logical_x_to_physical_coord(click_range.start);
+    // Detail: Click_ranges are half-open, but we need to return closed ranges.
+    let (end_y, end_x) = if !click_range.is_empty() {
+        logical.logical_x_to_physical_coord(click_range.end - 1)
+    } else {
+        (start_y, start_x)
+    };
+
+    SelectedRange::new(
+        CellPos::new(start_x.cast_signed(), start_y),
+        CellPos::new(end_x.cast_signed(), end_y),
+    )
 }
 
 /// Computes the selection range for the line around the specified coords
@@ -272,7 +311,7 @@ pub fn line_around(start: CellPos, terminal: &Terminal) -> Option<SelectedRange>
         }
     }
 
-    error!("line_around: Logical line does not contain stable row.");
+    warn!("line_around: Logical line does not contain stable row.");
     None
 }
 
