@@ -521,8 +521,8 @@ impl TerminalView {
         cluster: &CellCluster,
     ) -> Result<Option<GlyphRun>> {
         // Performance: BufferLine makes a copy of the text, is there a better way?
-        // Architecture: Should we shape all clusters in one co and prepare Attrs::metadata() accordingly?
-        // Architecture: Under the hood, rustybuzz is used for text shaping, use it directly?
+        // Architecture: Should we shape all clusters in one go and prepare Attrs::metadata() accordingly?
+        // Architecture: Under the hood, HarfRust is used for text shaping, use it directly?
         // Performance: This contains internal caches, which might benefit reusing them.
         let mut buffer = BufferLine::new(
             &cluster.text,
@@ -531,35 +531,23 @@ impl TerminalView {
             Shaping::Advanced,
         );
 
-        let units_per_em_f = font.units_per_em as f32;
+        let shaped_glyphs = buffer
+            // Simplify: If the ShapeLine cache is always empty, we may be able to use
+            // ShapeLine::build directly, or even better cache it directly here? This will then
+            // reuse most allocations? ... but we could just re-use BufferLine, or....?
+            .shape(font_system, 0)
+            .spans
+            .iter()
+            .flat_map(|span| &span.words)
+            .filter(|word| !word.blank)
+            .flat_map(|word| &word.glyphs);
 
-        // Performance: If we don't wrap, isn't a call to buffer.shape() enough?
-        //
-        // ADR: We lay out in em units so that positioning information can be processed and compared in
-        // discrete units and perhaps even cached better.
-        let lines = buffer.layout(
-            font_system,
-            units_per_em_f,
-            None,
-            Wrap::None,
-            // Match mono width does not seem to have an effect at all.
-            None,
-            0,
-        );
-        let line = match lines.len() {
-            0 => return Ok(None),
-            1 => &lines[0],
-            lines => {
-                bail!("Expected to see only one line layouted: {lines}")
-            }
-        };
-
-        let mut glyphs = Vec::with_capacity(line.glyphs.len());
+        let mut glyphs = Vec::with_capacity(cluster.width);
 
         let text_weight = attributes.text_weight();
         let font_weight = fontdb::Weight(text_weight.0);
 
-        for glyph in &line.glyphs {
+        for glyph in shaped_glyphs {
             // We place the glyphs based on what the cluster says.
             let cell_index = cluster.byte_to_cell_idx(glyph.start) - cluster.first_cell_idx;
             let glyph_x = cell_index as u32 * font.glyph_advance_px;
