@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Result, bail};
 use cosmic_text::{
     Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
-    Wrap, fontdb,
+    fontdb,
 };
 use euclid::Point2D;
 use rangeset::RangeSet;
