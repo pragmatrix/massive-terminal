@@ -761,7 +761,7 @@ impl TerminalView {
             ),
             CursorShapeType::Bar => Rect::new(
                 (left as _, y_offset_px as _),
-                // Ergonomics: Shouldn't we multiple stroke_thickness with width?
+                // Ergonomics: Shouldn't we multiply stroke_thickness with width?
                 (stroke_thickness, cell_size.1 as _),
             ),
         };
