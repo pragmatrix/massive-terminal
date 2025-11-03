@@ -14,21 +14,18 @@ use euclid::Point2D;
 use rangeset::RangeSet;
 use tuple::Map;
 
-use termwiz::{
-    cellcluster::CellCluster,
-    color::ColorAttribute,
-    surface::{CursorShape, CursorVisibility},
-};
+use termwiz::{cellcluster::CellCluster, color::ColorAttribute, surface::CursorShape};
 use wezterm_term::{
-    CellAttributes, CursorPosition, Hyperlink, Intensity, Line, StableRowIndex, Underline,
-    color::ColorPalette,
+    CellAttributes, Hyperlink, Intensity, Line, StableRowIndex, Underline, color::ColorPalette,
 };
 
 use super::TerminalGeometry;
 use crate::{
     TerminalFont,
     range_ops::{RangeOps, WithLength},
-    terminal::{SelectedRange, ViewGeometry, scroll_locations::ScrollLocations},
+    terminal::{
+        SelectedRange, ViewGeometry, cursor::CursorMetrics, scroll_locations::ScrollLocations,
+    },
     window_geometry::CellRect,
 };
 use massive_animation::{Animated, Interpolation};
@@ -306,9 +303,8 @@ impl ViewUpdate<'_> {
         )
     }
 
-    pub fn cursor(&mut self, pos: CursorPosition, stable: StableRowIndex, window_focused: bool) {
-        self.view
-            .update_cursor(self.scene, pos, stable, window_focused);
+    pub fn cursor(&mut self, metrics: Option<CursorMetrics>) {
+        self.view.update_cursor(self.scene, metrics);
     }
 
     pub fn selection(
@@ -697,25 +693,16 @@ enum CursorShapeType {
 }
 
 impl TerminalView {
-    fn update_cursor(
-        &mut self,
-        scene: &Scene,
-        pos: CursorPosition,
-        stable: StableRowIndex,
-        window_focused: bool,
-    ) {
-        match pos.visibility {
-            CursorVisibility::Hidden => {
-                self.cursor = None;
-            }
-            CursorVisibility::Visible => {
-                let shape_type = Self::cursor_shape_type(pos.shape, window_focused);
-                // Detail: pos.y is a VisibleRowIndex.
-                let (location, top_px) = self.locations.acquire_line_location(scene, stable);
-                let shape = self.cursor_shape(shape_type, pos.x, top_px);
-                self.cursor = Some(scene.stage(Visual::new(location, [shape])));
-            }
-        }
+    fn update_cursor(&mut self, scene: &Scene, cursor_metrics: Option<CursorMetrics>) {
+        self.cursor = cursor_metrics.map(|metrics| {
+            let shape_type = Self::cursor_shape_type(metrics.pos.shape, metrics.focused);
+            // Detail: pos.y is a VisibleRowIndex.
+            let (location, top_px) = self
+                .locations
+                .acquire_line_location(scene, metrics.stable_y);
+            let shape = self.cursor_shape(shape_type, metrics.pos.x, metrics.width, top_px);
+            scene.stage(Visual::new(location, [shape]))
+        })
     }
 
     fn cursor_shape_type(shape: CursorShape, focused: bool) -> CursorShapeType {
@@ -734,7 +721,13 @@ impl TerminalView {
         }
     }
 
-    fn cursor_shape(&self, ty: CursorShapeType, column: usize, y_offset_px: i64) -> Shape {
+    fn cursor_shape(
+        &self,
+        ty: CursorShapeType,
+        column: usize,
+        width: usize,
+        y_offset_px: i64,
+    ) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font().cell_size_px();
         let left = cell_size.0 * column as u32;
@@ -743,12 +736,14 @@ impl TerminalView {
         // position / thickness, not from the cell size.
         let stroke_thickness = ((cell_size.0 as f64 / 4.) + 1.).trunc();
 
+        let cell_width = cell_size.0 * width as u32;
+
         let rect = match ty {
             CursorShapeType::Rect => {
                 return StrokeRect::new(
                     Rect::new(
                         (left as _, y_offset_px as _),
-                        (cell_size.0 as _, cell_size.1 as _),
+                        (cell_width as _, cell_size.1 as _),
                     ),
                     Size::new(stroke_thickness, stroke_thickness),
                     color::from_srgba(cursor_color),
@@ -757,17 +752,18 @@ impl TerminalView {
             }
             CursorShapeType::Block => Rect::new(
                 (left as _, y_offset_px as _),
-                (cell_size.0 as _, cell_size.1 as _),
+                (cell_width as _, cell_size.1 as _),
             ),
             CursorShapeType::Underline => Rect::new(
                 (
                     left as _,
                     ((y_offset_px + self.font().ascender_px as i64) as f64) as _,
                 ),
-                (cell_size.0 as _, stroke_thickness),
+                (cell_width as _, stroke_thickness),
             ),
             CursorShapeType::Bar => Rect::new(
                 (left as _, y_offset_px as _),
+                // Ergonomics: Shouldn't we multiple stroke_thickness with width?
                 (stroke_thickness, cell_size.1 as _),
             ),
         };
