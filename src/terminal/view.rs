@@ -470,6 +470,7 @@ impl TerminalView {
         // Performance: Can we use some capacity here? Use a temporary array here?
         let mut overlay_shapes = Vec::new();
         let mut left = 0;
+        let cell_size_px = self.font().cell_size_px().0 as i64;
 
         // Optimization: Combine clusters with compatible attributes. Colors and widths can vary
         // inside a GlyphRun.
@@ -495,7 +496,6 @@ impl TerminalView {
             );
 
             if let Some(run) = run {
-                left += cluster.width as i64 * self.font().cell_size_px().0 as i64;
                 shapes.push(run.into());
             }
 
@@ -506,6 +506,8 @@ impl TerminalView {
             if let Some(overlay) = overlay {
                 overlay_shapes.push(overlay);
             }
+
+            left += cluster.width as i64 * cell_size_px;
         }
 
         Ok((shapes, overlay_shapes))
@@ -531,9 +533,19 @@ impl TerminalView {
 
         let units_per_em_f = font.units_per_em as f32;
 
+        // Performance: If we don't wrap, isn't a call to buffer.shape() enough?
+        //
         // ADR: We lay out in em units so that positioning information can be processed and compared in
         // discrete units and perhaps even cached better.
-        let lines = buffer.layout(font_system, units_per_em_f, None, Wrap::None, None, 0);
+        let lines = buffer.layout(
+            font_system,
+            units_per_em_f,
+            None,
+            Wrap::None,
+            // Match mono width does not seem to have an effect at all.
+            None,
+            0,
+        );
         let line = match lines.len() {
             0 => return Ok(None),
             1 => &lines[0],
@@ -542,29 +554,15 @@ impl TerminalView {
             }
         };
 
-        // Cosmic text provides fractional positions, but we need to align every character directly on a
-        // pixel grid, so start with 0 for now.
-        //
-        // Robustness: scale everything up so that while layout EM positions are used
-        // to exactly map them to the pixel grid.
-
         let mut glyphs = Vec::with_capacity(line.glyphs.len());
-
-        // Robustness: Shouldn't this be always equal the number of line glyphs?
-        let mut cell_width = 0;
 
         let text_weight = attributes.text_weight();
         let font_weight = fontdb::Weight(text_weight.0);
 
         for glyph in &line.glyphs {
-            // Compute the discrete x offset and pixel position.
-            // Robustness: Report unexpected variance here (> 0.001 ?)
-            let glyph_index = (glyph.x / font.glyph_advance_em as f32).round() as u32;
-            let glyph_index_width = (glyph.w / font.glyph_advance_em as f32).round() as u32;
-            let glyph_x = glyph_index * font.glyph_advance_px;
-
-            // Optimization: Compute this only once.
-            cell_width = glyph_index + glyph_index_width;
+            // We place the glyphs based on what the cluster says.
+            let cell_index = cluster.byte_to_cell_idx(glyph.start) - cluster.first_cell_idx;
+            let glyph_x = cell_index as u32 * font.glyph_advance_px;
 
             // Optimization: Don't pass empty glyphs.
             let glyph = RunGlyph {
@@ -594,7 +592,7 @@ impl TerminalView {
                 // size.
                 max_ascent: font.ascender_px,
                 max_descent: font.descender_px,
-                width: (cell_width * font.glyph_advance_px),
+                width: (cluster.width as u32 * font.glyph_advance_px),
             },
             text_color: attributes.foreground_color,
             text_weight,
