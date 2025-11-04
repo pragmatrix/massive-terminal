@@ -520,6 +520,9 @@ impl TerminalView {
         (left, top): (i64, i64),
         cluster: &CellCluster,
     ) -> Result<Option<GlyphRun>> {
+        let text_weight = attributes.text_weight();
+        let font_weight = fontdb::Weight(text_weight.0);
+
         // Performance: BufferLine makes a copy of the text, is there a better way?
         // Architecture: Should we shape all clusters in one go and prepare Attrs::metadata() accordingly?
         // Architecture: Under the hood, HarfRust is used for text shaping, use it directly?
@@ -527,7 +530,11 @@ impl TerminalView {
         let mut buffer = BufferLine::new(
             &cluster.text,
             LineEnding::None,
-            AttrsList::new(&Attrs::new().family(Family::Name(&font.family_name))),
+            AttrsList::new(
+                &Attrs::new()
+                    .family(Family::Name(&font.family_name))
+                    .weight(font_weight),
+            ),
             Shaping::Advanced,
         );
 
@@ -543,9 +550,6 @@ impl TerminalView {
             .flat_map(|word| &word.glyphs);
 
         let mut glyphs = Vec::with_capacity(cluster.width);
-
-        let text_weight = attributes.text_weight();
-        let font_weight = fontdb::Weight(text_weight.0);
 
         for glyph in shaped_glyphs {
             // We place the glyphs based on what the cluster says not what the layout engine
@@ -567,7 +571,7 @@ impl TerminalView {
                     font_size_bits: font.size.to_bits(),
                     x_bin: SubpixelBin::Zero,
                     y_bin: SubpixelBin::Zero,
-                    font_weight,
+                    font_weight: glyph.font_weight,
                     flags: glyph.cache_key_flags,
                 },
             };
@@ -584,6 +588,7 @@ impl TerminalView {
                 width: (cluster.width as u32 * font.glyph_advance_px),
             },
             text_color: attributes.foreground_color,
+            // This looks redundant here.
             text_weight,
             glyphs,
         };
