@@ -114,6 +114,12 @@ pub struct SelectedRange {
     end: CellPos,
 }
 
+impl From<CellPos> for SelectedRange {
+    fn from(pos: CellPos) -> Self {
+        SelectedRange::new(pos, pos)
+    }
+}
+
 impl SelectedRange {
     pub fn boundary(a: Self, b: Self) -> Self {
         let start = a.start.min(b.start);
@@ -129,22 +135,22 @@ impl SelectedRange {
         }
     }
 
-    pub fn extend(self, mode: SelectionMode, terminal: &Terminal) -> Option<Self> {
+    pub fn extend(self, mode: SelectionMode, terminal: &Terminal) -> Self {
         match mode {
             SelectionMode::Cell => {
-                let range_a = cell_around(self.start, terminal)?;
-                let range_b = cell_around(self.end, terminal)?;
-                Some(Self::boundary(range_a, range_b))
+                let range_a = cell_around(self.start, terminal);
+                let range_b = cell_around(self.end, terminal);
+                Self::boundary(range_a, range_b)
             }
             SelectionMode::Word => {
-                let range_a = word_around(self.start, terminal)?;
-                let range_b = word_around(self.end, terminal)?;
-                Some(Self::boundary(range_a, range_b))
+                let range_a = word_around(self.start, terminal);
+                let range_b = word_around(self.end, terminal);
+                Self::boundary(range_a, range_b)
             }
             SelectionMode::Line => {
-                let range_a = line_around(self.start, terminal)?;
-                let range_b = line_around(self.end, terminal)?;
-                Some(Self::boundary(range_a, range_b))
+                let range_a = line_around(self.start, terminal);
+                let range_b = line_around(self.end, terminal);
+                Self::boundary(range_a, range_b)
             }
         }
     }
@@ -227,7 +233,7 @@ impl SelectedRange {
     }
 }
 
-pub fn cell_around(pos: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
+pub fn cell_around(pos: CellPos, terminal: &Terminal) -> SelectedRange {
     // Performance: I am not sure if going through the logical line is needed just to find out if
     // the cell at pos or one before is a double-width cell.
     for logical in get_logical_lines(terminal, pos.row.with_len(1)) {
@@ -240,25 +246,18 @@ pub fn cell_around(pos: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
         for cell in logical.logical.visible_cells() {
             let click_range = cell.cell_index().with_len(cell.width());
             if click_range.contains(&start_idx) {
-                return Some(click_range_to_selected_range(&logical, click_range));
+                return click_range_to_selected_range(&logical, click_range);
             }
         }
-
-        // outside of the line's range.
-        return Some(SelectedRange {
-            start: pos,
-            end: pos,
-        });
     }
 
-    warn!("cell_around: Logical line does not contain stable row.");
-    None
+    pos.into()
 }
 
-// Copied from wezterm-gui/src/selection.rs
+// Mostly copied from wezterm-gui/src/selection.rs
 
 /// Computes the selection range for the word around the specified coords
-pub fn word_around(pos: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
+pub fn word_around(pos: CellPos, terminal: &Terminal) -> SelectedRange {
     for logical in get_logical_lines(terminal, pos.row.with_len(1)) {
         if !logical.contains_y(pos.row) {
             continue;
@@ -270,13 +269,12 @@ pub fn word_around(pos: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
             .compute_double_click_range(start_idx, is_double_click_word)
         {
             DoubleClickRange::RangeWithWrap(click_range) | DoubleClickRange::Range(click_range) => {
-                Some(click_range_to_selected_range(&logical, click_range))
+                click_range_to_selected_range(&logical, click_range)
             }
         };
     }
 
-    warn!("word_around: Logical line does not contain stable row.");
-    None
+    pos.into()
 }
 
 fn click_range_to_selected_range(
@@ -298,21 +296,20 @@ fn click_range_to_selected_range(
 }
 
 /// Computes the selection range for the line around the specified coords
-pub fn line_around(start: CellPos, terminal: &Terminal) -> Option<SelectedRange> {
-    for logical in get_logical_lines(terminal, start.row.with_len(1)) {
-        if logical.contains_y(start.row) {
-            return Some(SelectedRange {
-                start: CellPos::new(0, logical.first_row),
-                end: CellPos::new(
+pub fn line_around(pos: CellPos, terminal: &Terminal) -> SelectedRange {
+    for logical in get_logical_lines(terminal, pos.row.with_len(1)) {
+        if logical.contains_y(pos.row) {
+            return SelectedRange::new(
+                CellPos::new(0, logical.first_row),
+                CellPos::new(
                     isize::MAX,
                     logical.first_row + (logical.physical_lines.len() - 1) as StableRowIndex,
                 ),
-            });
+            );
         }
     }
 
-    warn!("line_around: Logical line does not contain stable row.");
-    None
+    pos.into()
 }
 
 fn is_double_click_word(s: &str) -> bool {

@@ -281,7 +281,7 @@ impl TerminalPresenter {
 
         let selected_range = view_geometry.selected_user_range(&self.selection);
         let selected_range =
-            selected_range.and_then(|r| r.extend(self.selection.mode().unwrap(), &terminal));
+            selected_range.map(|r| r.extend(self.selection.mode().unwrap(), &terminal));
 
         // ADR: Need to keep the time we lock the Terminal as short as possible, so that terminal
         // changes can be pushed to it as fast as possible.
@@ -470,7 +470,7 @@ impl TerminalPresenter {
     pub fn selected_range(&self) -> Option<SelectedRange> {
         // Architecture: May be a SelectedUserRange can transport SelectionMode?
         let range = self.view_geometry().selected_user_range(&self.selection);
-        range.and_then(|r| r.extend(self.selection.mode().unwrap(), &self.terminal.lock()))
+        range.map(|r| r.extend(self.selection.mode().unwrap(), &self.terminal.lock()))
     }
 
     pub fn view_geometry(&self) -> ViewGeometry {
