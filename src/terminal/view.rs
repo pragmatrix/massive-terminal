@@ -548,11 +548,12 @@ impl TerminalView {
         let font_weight = fontdb::Weight(text_weight.0);
 
         for glyph in shaped_glyphs {
-            // We place the glyphs based on what the cluster says.
+            // We place the glyphs based on what the cluster says not what the layout engine
+            // provides.
             let cell_index = cluster.byte_to_cell_idx(glyph.start) - cluster.first_cell_idx;
             let glyph_x = cell_index as u32 * font.glyph_advance_px;
 
-            // Optimization: Don't pass empty glyphs.
+            // Optimization: Don't pass empty / blank glyphs.
             let glyph = RunGlyph {
                 pos: (glyph_x as i32, 0),
                 // Architecture: Introduce an internal CacheKey that does not use SubpixelBin (we won't
