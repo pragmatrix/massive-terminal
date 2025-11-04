@@ -889,7 +889,7 @@ impl<'a> AttributeResolver<'a> {
         let (foreground, background) = (attrs.foreground(), attrs.background());
         let background_default = background == ColorAttribute::Default;
 
-        let foreground = color::from_srgba(palette.resolve_fg(foreground));
+        let foreground = Self::resolve_fg(foreground, palette, attrs);
         let background = color::from_srgba(palette.resolve_bg(background));
 
         let (foreground, background, background_default) = if attrs.reverse() != reverse_video {
@@ -911,8 +911,21 @@ impl<'a> AttributeResolver<'a> {
         if color == ColorAttribute::Default {
             return self.foreground_color;
         }
-        // Resolving fg / bg behaves the same if the color is not the default.
-        color::from_srgba(self.palette.resolve_fg(color))
+        // Detail: Resolving fg / bg behaves the same if the color is not the default.
+        Self::resolve_fg(color, self.palette, self.attributes)
+    }
+
+    /// Resolve a foreground color, including bold brightening.
+    fn resolve_fg(color: ColorAttribute, palette: &ColorPalette, attrs: &CellAttributes) -> Color {
+        // bold brightening.
+        let color = match color {
+            ColorAttribute::PaletteIndex(i) if i < 8 && attrs.intensity() == Intensity::Bold => {
+                ColorAttribute::PaletteIndex(i + 8)
+            }
+            color => color,
+        };
+
+        color::from_srgba(palette.resolve_fg(color))
     }
 
     pub fn text_weight(&self) -> TextWeight {
