@@ -1,9 +1,4 @@
-use std::{
-    collections::VecDeque,
-    ops::Range,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::VecDeque, ops::Range, sync::Arc, time::Duration};
 
 use anyhow::{Result, bail};
 use cosmic_text::{
@@ -30,6 +25,7 @@ use crate::{
 };
 use massive_animation::{Animated, Interpolation};
 use massive_geometry::{Color, Point, Rect, Size};
+use massive_renderer::FontManager;
 use massive_scene::{Handle, Location, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
 use massive_shell::Scene;
@@ -38,7 +34,7 @@ const SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone)]
 pub struct TerminalViewParams {
-    pub font_system: Arc<Mutex<FontSystem>>,
+    pub fonts: FontManager,
     pub font: TerminalFont,
     pub parent_location: Handle<Location>,
 }
@@ -430,7 +426,7 @@ impl TerminalView {
             let (shapes, overlay_shapes) = {
                 // Lock the font_system for the least amount of time possible. This is shared with
                 // the renderer.
-                let mut font_system = self.params.font_system.lock().unwrap();
+                let mut font_system = self.params.fonts.lock();
                 self.create_line_shapes(
                     &mut font_system,
                     top,

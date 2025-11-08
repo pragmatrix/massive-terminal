@@ -1,12 +1,11 @@
 use std::{
     io::{self, ErrorKind},
-    sync::{self, Arc},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use arboard::Clipboard;
-use cosmic_text::{FontSystem, Weight, fontdb};
 use derive_more::Debug;
 use log::{debug, info, trace, warn};
 use parking_lot::Mutex;
@@ -23,8 +22,9 @@ use wezterm_term::{
     KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex, Terminal, TerminalConfiguration, color,
 };
 
-use massive_geometry::{Camera, Color, Identity, Point};
+use massive_geometry::{Color, Identity, Point};
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
+use massive_renderer::{FontManager, FontWeight};
 use massive_scene::{Handle, Location, Matrix};
 use massive_shell::{
     ApplicationContext, AsyncWindowRenderer, Scene, ShellEvent, ShellWindow, shell,
@@ -87,36 +87,16 @@ struct MassiveTerminal {
 
 impl MassiveTerminal {
     async fn new(context: ApplicationContext) -> Result<Self> {
-        let primary_font_ids;
-        // ADR: A FontManager / FontSystem (perhaps with default fonts optionally) should probably
-        // be provided by the Shell.
-        let mut font_system = {
-            // In wasm the system locale can't be acquired. `sys_locale::get_locale()`
-            let locale =
-                sys_locale::get_locale().ok_or(anyhow!("Failed to retrieve current locale"))?;
+        let fonts = FontManager::system();
+        // Don't load system fonts for now, this way we get the same result on wasm and local runs.
 
-            let mut font_db = fontdb::Database::new();
-            font_db.load_system_fonts();
+        const JETBRAINS_MONO: &[u8] =
+            include_bytes!("fonts/JetBrainsMono-2.304/fonts/variable/JetBrainsMono[wght].ttf");
 
-            let mut load_font = |font: &'static [u8]| {
-                let source = fontdb::Source::Binary(Arc::new(font));
-                font_db.load_font_source(source)
-            };
-
-            // Don't load system fonts for now, this way we get the same result on wasm and local runs.
-
-            const JETBRAINS_MONO: &[u8] =
-                include_bytes!("fonts/JetBrainsMono-2.304/fonts/variable/JetBrainsMono[wght].ttf");
-
-            primary_font_ids = load_font(JETBRAINS_MONO);
-
-            FontSystem::new_with_locale_and_db(locale, font_db)
-        };
+        let font_ids = fonts.load_font(JETBRAINS_MONO);
 
         // This font is only used for measuring the size of the terminal upfront.
-        let font = font_system
-            .get_font(primary_font_ids[0], Weight::NORMAL)
-            .unwrap();
+        let font = fonts.get_font(font_ids[0], FontWeight::NORMAL).unwrap();
 
         let scale_factor = context.primary_monitor_scale_factor().unwrap_or(1.0);
         let font_size = DEFAULT_FONT_SIZE * scale_factor as f32;
@@ -137,21 +117,14 @@ impl MassiveTerminal {
         let window = context.new_window(inner_window_size, None).await?;
         window.set_title(APPLICATION_NAME);
 
-        let font_system = Arc::new(sync::Mutex::new(font_system));
-
-        // Ergonomics: Camera::default() should probably create this one.
-        let camera = {
-            let fovy: f64 = 45.0;
-            let camera_distance = 1.0 / (fovy / 2.0).to_radians().tan();
-            Camera::new((0.0, 0.0, camera_distance), (0.0, 0.0, 0.0))
-        };
-
         // Ergonomics: Why does the renderer need a camera here this early?
         let renderer = window
-            .new_renderer(font_system.clone(), camera, inner_window_size)
+            .renderer()
+            .with_shapes()
+            .with_text(fonts.clone())
+            .with_background_color(Color::BLACK)
+            .build()
             .await?;
-
-        renderer.set_background_color(Some(Color::BLACK))?;
 
         // Use the native pty implementation for the system
         let pty_system = native_pty_system();
@@ -189,7 +162,7 @@ impl MassiveTerminal {
         });
 
         let view_params = TerminalViewParams {
-            font_system: font_system.clone(),
+            fonts: fonts.clone(),
             font: terminal_font.clone(),
             parent_location: view_location.clone(),
         };
