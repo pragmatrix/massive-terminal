@@ -540,7 +540,7 @@ impl MassiveTerminal {
     }
 
     fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {
-        // First the window.
+        // First the window geometry.
         let suggested_terminal_size_px = self.window_state.geometry.resize(new_window_size_px);
         if self.presenter.resize(suggested_terminal_size_px)? {
             self.pty_pair
