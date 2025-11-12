@@ -221,7 +221,7 @@ impl MassiveTerminal {
                 _ = notify.notified() => {
                     None
                 }
-                shell_event = self.context.wait_for_shell_event(&mut self.renderer) => {
+                shell_event = self.context.wait_for_shell_event() => {
                     Some(shell_event?)
                 }
             };
@@ -239,17 +239,6 @@ impl MassiveTerminal {
                     &mut mouse_pointer_on_view,
                 )?;
             }
-
-            // Performance: We begin an update cycle whenever the terminal advances, too. This
-            // should probably be done asynchronously, deferred, etc. But note that the renderer is
-            // also running asynchronously at the end of the update cycle.
-            //
-            // Architecture: We need to enforce running animations _inside_ the update cycle
-            // somehow. Otherwise this can lead to confusing bugs, for example if the following code
-            // does run before begin_update_cycle().
-            let _cycle = self
-                .scene
-                .begin_update_cycle(&mut self.renderer, shell_event_opt.as_ref())?;
 
             // Idea: Make shell_event opaque and allow checking for animations update in UpdateCycle
             // that is returned from begin_update_cycle()?
@@ -281,6 +270,10 @@ impl MassiveTerminal {
 
                 self.view_matrix.update_if_changed(center_transform);
             }
+
+            // Render
+
+            self.scene.render_to(&mut self.renderer, shell_event_opt)?;
 
             // Update mouse cursor shape.
 
