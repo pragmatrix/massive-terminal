@@ -54,6 +54,7 @@ winit.workspace = true # Ergonomics: Get rid of the winit dependency. Used for b
 # massive deps
 
 massive-animation = { path = "massive/animation" }
+massive-applications = { path = "massive/applications" }
 massive-geometry = { path = "massive/geometry" }
 massive-input = { path = "massive/input" }
 massive-renderer = { path = "massive/renderer" }

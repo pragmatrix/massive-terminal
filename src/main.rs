@@ -98,7 +98,7 @@ impl MassiveTerminal {
         // This font is only used for measuring the size of the terminal upfront.
         let font = fonts.get_font(font_ids[0], FontWeight::NORMAL).unwrap();
 
-        let scale_factor = context.primary_monitor_scale_factor().unwrap_or(1.0);
+        let scale_factor = context.primary_monitor_scale_factor();
         let font_size = DEFAULT_FONT_SIZE * scale_factor as f32;
 
         let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
@@ -114,7 +114,7 @@ impl MassiveTerminal {
 
         let inner_window_size: PhysicalSize<u32> = window_geometry.inner_size_px().into();
 
-        let window = context.new_window(inner_window_size, None).await?;
+        let window = context.new_window(inner_window_size).await?;
         window.set_title(APPLICATION_NAME);
 
         // Ergonomics: Why does the renderer need a camera here this early?
@@ -153,7 +153,7 @@ impl MassiveTerminal {
         );
         let last_rendered_seq_no = terminal.current_seqno();
 
-        let scene = Scene::new();
+        let scene = context.new_scene();
 
         let view_matrix = scene.stage(Matrix::identity());
         let view_location = scene.stage(Location {
@@ -546,8 +546,7 @@ impl MassiveTerminal {
 
     fn min_pixel_distance_considered_movement(&self) -> f64 {
         const LOGICAL_POINTS_CONSIDERED_MOVEMENT: f64 = 5.0;
-        LOGICAL_POINTS_CONSIDERED_MOVEMENT
-            * self.context.primary_monitor_scale_factor().unwrap_or(1.0)
+        LOGICAL_POINTS_CONSIDERED_MOVEMENT * self.context.primary_monitor_scale_factor()
     }
 }
 
