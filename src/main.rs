@@ -242,7 +242,7 @@ impl MassiveTerminal {
 
             // Idea: Make shell_event opaque and allow checking for animations update in UpdateCycle
             // that is returned from begin_update_cycle()?
-            if matches!(shell_event_opt, Some(ShellEvent::ApplyAnimations)) {
+            if matches!(shell_event_opt, Some(ShellEvent::ApplyAnimations(_))) {
                 trace!("Applying animations");
                 self.terminal_scroller.proceed();
             }
