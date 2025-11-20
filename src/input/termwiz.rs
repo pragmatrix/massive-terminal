@@ -131,8 +131,10 @@ fn convert_named_key(named: &NamedKey) -> Option<KeyCode> {
     }
 }
 
-pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, Point)> {
-    let window_event = ev.window_event()?;
+pub fn convert_mouse_event(
+    ev: &Event<WindowEvent>,
+) -> Option<(MouseEventKind, MouseButton, Point)> {
+    let window_event = ev.event();
     let pos = ev.pos()?;
 
     let (kind, button) = match window_event {
@@ -184,7 +186,10 @@ pub fn convert_mouse_event(ev: &Event) -> Option<(MouseEventKind, MouseButton, P
     Some((kind, button, pos))
 }
 
-fn mouse_button_pressed_on_device(ev: &Event, device_id: DeviceId) -> Option<MouseButton> {
+fn mouse_button_pressed_on_device(
+    ev: &Event<WindowEvent>,
+    device_id: DeviceId,
+) -> Option<MouseButton> {
     let (button, _) = ev
         .states()
         .pointing_device(device_id)?

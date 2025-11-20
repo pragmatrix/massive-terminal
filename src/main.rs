@@ -68,7 +68,7 @@ struct MassiveTerminal {
     scene: Scene,
     view_matrix: Handle<Matrix>,
 
-    event_manager: EventManager,
+    event_manager: EventManager<WindowEvent>,
 
     window_state: WindowState,
     presenter: TerminalPresenter,
@@ -487,7 +487,7 @@ impl MassiveTerminal {
 
     // Architecture: Is the presenter responsible for this?
     fn may_forward_event_to_terminal(
-        ev: &Event,
+        ev: &Event<WindowEvent>,
         terminal: &mut Terminal,
         geometry: &ViewGeometry,
         map_to_view: impl Fn(Point) -> Option<PixelPoint>,
