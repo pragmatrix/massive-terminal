@@ -4,7 +4,7 @@
 use std::{collections::HashMap, ops::Range};
 
 use derive_more::{Deref, From};
-use log::debug;
+use log::trace;
 
 use wezterm_term::StableRowIndex;
 
@@ -83,6 +83,10 @@ impl ScrollLocations {
         (location, line_offset_px)
     }
 
+    pub fn scroll_offset_px(&self) -> i64 {
+        self.scroll_offset_px
+    }
+
     /// Scroll the _current_ scroll offset of all matrices to the pixel location.
     pub fn set_scroll_offset_px(&mut self, scroll_offset_px: i64) {
         let line_height = self.line_height_px;
@@ -116,7 +120,7 @@ impl ScrollLocations {
 
         let locations_after = self.locations.len();
         if locations_before != locations_after {
-            debug!(
+            trace!(
                 "Number of scroll locations reduced from {locations_before} to {locations_after}"
             )
         }

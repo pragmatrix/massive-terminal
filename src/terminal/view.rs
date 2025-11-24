@@ -167,7 +167,7 @@ impl TerminalView {
         self.scroll_offset_px.value().round() as i64
     }
 
-    /// Returns the current fractional scroll offset in pixel.
+    /// Returns the current scroll offset in fractional pixel.
     pub fn current_scroll_offset_px(&self) -> f64 {
         self.scroll_offset_px.value()
     }
@@ -189,7 +189,7 @@ impl TerminalView {
         self.apply_animations();
     }
 
-    /// Update currently running animations.
+    /// Apply currently running animations.
     pub fn apply_animations(&mut self) {
         // Detail: Even if the animated value is not anymore animating, we might not have retrieved and
         // update the latest value yet.
@@ -213,7 +213,7 @@ impl TerminalView {
         // First pixel visible inside the screen viewed.
         let line_height_px = self.font().cell_size_px().1 as i64;
 
-        let topmost_pixel_line_visible = self.current_scroll_offset_px_snapped();
+        let topmost_pixel_line_visible = self.locations.scroll_offset_px();
         let topmost_stable_render_line = topmost_pixel_line_visible.div_euclid(line_height_px);
         let topmost_stable_render_line_ascend =
             topmost_pixel_line_visible.rem_euclid(line_height_px);

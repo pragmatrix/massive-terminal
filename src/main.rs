@@ -248,6 +248,12 @@ impl MassiveTerminal {
             }
 
             {
+                // Currently we need always apply view animations, otherwise the scroll locations
+                // are not in sync with the updated lines which results in flickering (or even
+                // staying a black screen for a while) while scrolling when the terminal moves too
+                // fast. Perhaps increasing the number of lines in the scrollback buffer may help.
+                self.presenter.apply_animations();
+
                 // Update lines, selection, and cursor.
                 self.presenter
                     .update(&self.window_state, &self.scene, mouse_pointer_on_view)?;

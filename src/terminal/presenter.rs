@@ -106,6 +106,10 @@ impl TerminalPresenter {
         self.scroll_state = ScrollState::RestingPixel(current + delta);
     }
 
+    pub fn apply_animations(&mut self) {
+        self.view.apply_animations();
+    }
+
     /// Update the view lines, cursor, and selection.
     ///
     /// WezTerm terms:
@@ -125,14 +129,6 @@ impl TerminalPresenter {
         // Architecture: Shouldn't this come via `window_state`?
         mouse_pointer: Option<PixelPoint>,
     ) -> Result<()> {
-        // Currently we need always apply view animations, otherwise the scroll matrix is not
-        // in sync with the updated lines which results in flickering while scrolling (i.e.
-        // lines disappearing too early when scrolling up).
-        //
-        // Architecture: This is an indication of what's actually wrong with the ApplyAnimations
-        // concept.
-        self.view.apply_animations();
-
         let mut terminal = self.terminal.lock();
 
         if Self::sync_alt_screen(&terminal, &mut self.view, scene) {
