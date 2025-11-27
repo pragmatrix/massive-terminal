@@ -279,7 +279,10 @@ impl MassiveTerminal {
 
             // Render
 
-            self.scene.render_to(&mut self.renderer, shell_event_opt)?;
+            if let Some(shell_event) = shell_event_opt {
+                self.renderer.resize_redraw(&shell_event)?;
+            }
+            self.scene.render_to(&mut self.renderer)?;
 
             // Update mouse cursor shape.
 
