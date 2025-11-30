@@ -19,9 +19,10 @@ use crate::{
     TerminalFont,
     range_ops::{RangeOps, WithLength},
     terminal::{
-        SelectedRange, ViewGeometry, cursor::CursorMetrics, scroll_locations::ScrollLocations,
+        SelectedRange, TerminalViewGeometry, cursor::CursorMetrics,
+        scroll_locations::ScrollLocations,
     },
-    window_geometry::CellRect,
+    view_geometry::CellRect,
 };
 use massive_animation::{Animated, Interpolation};
 use massive_geometry::{Color, Point, Rect, Size};
@@ -206,7 +207,7 @@ impl TerminalView {
     ///
     /// This also means that the returned range might be out of range with respect to the actual
     /// terminal lines.
-    pub fn geometry(&self, terminal_geometry: &TerminalGeometry) -> ViewGeometry {
+    pub fn geometry(&self, terminal_geometry: &TerminalGeometry) -> TerminalViewGeometry {
         let rows = terminal_geometry.rows();
         assert!(rows >= 1);
 
@@ -228,7 +229,7 @@ impl TerminalView {
         let stable_range = topmost_stable_render_line as StableRowIndex
             ..(bottom_stable_render_line + 1) as StableRowIndex;
 
-        ViewGeometry {
+        TerminalViewGeometry {
             terminal: *terminal_geometry,
             stable_range_ascend_px: topmost_stable_render_line_ascend as u32,
             stable_range,

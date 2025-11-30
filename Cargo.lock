@@ -2534,7 +2534,29 @@ dependencies = [
  "log",
  "massive-animation",
  "massive-geometry",
+ "massive-input",
+ "massive-renderer",
  "massive-scene",
+ "tokio",
+ "uuid",
+ "winit",
+]
+
+[[package]]
+name = "massive-desktop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "futures",
+ "log",
+ "massive-animation",
+ "massive-applications",
+ "massive-geometry",
+ "massive-input",
+ "massive-renderer",
+ "massive-scene",
+ "massive-shell",
  "tokio",
  "uuid",
  "winit",
@@ -2662,6 +2684,8 @@ dependencies = [
  "futures",
  "log",
  "massive-animation",
+ "massive-applications",
+ "massive-desktop",
  "massive-geometry",
  "massive-input",
  "massive-renderer",

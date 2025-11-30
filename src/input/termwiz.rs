@@ -4,11 +4,12 @@
 //! (as used by `wezterm-term`).
 
 use winit::{
-    event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, TouchPhase, WindowEvent},
+    event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, TouchPhase},
     keyboard::{Key, ModifiersState, NamedKey},
 };
 
-use termwiz::input::{KeyCode, Modifiers};
+use massive_applications::ViewEvent;
+use termwiz::input::{KeyCode, Modifiers as TermwizModifiers};
 use wezterm_term::{MouseButton, MouseEventKind};
 
 use massive_geometry::Point;
@@ -17,26 +18,29 @@ use massive_input::Event;
 /// Convert a full `winit` `KeyEvent` to a `(KeyCode, Modifiers)` pair.
 /// Returns `None` when the event shouldn't be forwarded to the terminal
 /// (e.g. pure modifier changes or unsupported keys).
-pub fn convert_key_event(event: &KeyEvent, mods: ModifiersState) -> Option<(KeyCode, Modifiers)> {
+pub fn convert_key_event(
+    event: &KeyEvent,
+    mods: ModifiersState,
+) -> Option<(KeyCode, TermwizModifiers)> {
     let keycode = convert_key(&event.logical_key)?;
     let converted_mods = convert_modifiers(mods);
     Some((keycode, converted_mods))
 }
 
 /// Convert a `winit` `ModifiersState` to `termwiz` `Modifiers`.
-pub fn convert_modifiers(mods: ModifiersState) -> Modifiers {
-    let mut out = Modifiers::NONE;
+pub fn convert_modifiers(mods: ModifiersState) -> TermwizModifiers {
+    let mut out = TermwizModifiers::NONE;
     if mods.shift_key() {
-        out |= Modifiers::SHIFT;
+        out |= TermwizModifiers::SHIFT;
     }
     if mods.control_key() {
-        out |= Modifiers::CTRL;
+        out |= TermwizModifiers::CTRL;
     }
     if mods.alt_key() {
-        out |= Modifiers::ALT;
+        out |= TermwizModifiers::ALT;
     }
     if mods.super_key() {
-        out |= Modifiers::SUPER;
+        out |= TermwizModifiers::SUPER;
     }
     out
 }
@@ -131,24 +135,23 @@ fn convert_named_key(named: &NamedKey) -> Option<KeyCode> {
     }
 }
 
-pub fn convert_mouse_event(
-    ev: &Event<WindowEvent>,
+/// Convert an `Event<ViewEvent>` to mouse event data for terminal forwarding.
+/// Returns `(MouseEventKind, MouseButton, Point)` if the event is a mouse event.
+pub fn convert_mouse_event_from_view(
+    ev: &Event<ViewEvent>,
 ) -> Option<(MouseEventKind, MouseButton, Point)> {
-    let window_event = ev.event();
+    let view_event = ev.event();
     let pos = ev.pos()?;
 
-    let (kind, button) = match window_event {
-        WindowEvent::CursorMoved {
-            device_id,
-            position: _,
-        } => (
+    let (kind, button) = match view_event {
+        ViewEvent::CursorMoved { device_id, .. } => (
             MouseEventKind::Move,
-            mouse_button_pressed_on_device(ev, *device_id).unwrap_or(MouseButton::None),
+            mouse_button_pressed_on_view_device(ev, *device_id).unwrap_or(MouseButton::None),
         ),
-        WindowEvent::MouseWheel {
-            device_id: _,
+        ViewEvent::MouseWheel {
             delta: MouseScrollDelta::LineDelta(xd, 0.0),
             phase: TouchPhase::Moved,
+            ..
         } => (
             MouseEventKind::Press,
             if *xd < 0.0 {
@@ -157,10 +160,10 @@ pub fn convert_mouse_event(
                 MouseButton::WheelRight(xd.round() as usize)
             },
         ),
-        WindowEvent::MouseWheel {
-            device_id: _,
+        ViewEvent::MouseWheel {
             delta: MouseScrollDelta::LineDelta(0.0, yd),
             phase: TouchPhase::Moved,
+            ..
         } => (
             MouseEventKind::Press,
             if *yd < 0.0 {
@@ -169,11 +172,7 @@ pub fn convert_mouse_event(
                 MouseButton::WheelDown(yd.round() as usize)
             },
         ),
-        WindowEvent::MouseInput {
-            device_id: _,
-            state,
-            button,
-        } => (
+        ViewEvent::MouseInput { state, button, .. } => (
             match state {
                 ElementState::Pressed => MouseEventKind::Press,
                 ElementState::Released => MouseEventKind::Release,
@@ -186,8 +185,8 @@ pub fn convert_mouse_event(
     Some((kind, button, pos))
 }
 
-fn mouse_button_pressed_on_device(
-    ev: &Event<WindowEvent>,
+fn mouse_button_pressed_on_view_device(
+    ev: &Event<ViewEvent>,
     device_id: DeviceId,
 ) -> Option<MouseButton> {
     let (button, _) = ev

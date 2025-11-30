@@ -3,7 +3,7 @@ use std::ops::Range;
 use portable_pty::PtySize;
 use wezterm_term::StableRowIndex;
 
-use crate::window_geometry::PixelPoint;
+use crate::view_geometry::PixelPoint;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TerminalGeometry {

@@ -7,11 +7,11 @@ use wezterm_term::{Cell, Screen, StableRowIndex, Terminal};
 use crate::{
     range_ops::WithLength,
     terminal::{ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry},
-    window_geometry::{CellUnit, PixelPoint},
+    view_geometry::{CellUnit, PixelPoint},
 };
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct ViewGeometry {
+pub struct TerminalViewGeometry {
     pub terminal: TerminalGeometry,
 
     /// The number of pixels the first stable row shoots over the top of the view.
@@ -24,7 +24,7 @@ pub struct ViewGeometry {
     pub stable_range: Range<StableRowIndex>,
 }
 
-impl ViewGeometry {
+impl TerminalViewGeometry {
     /// The vertical pixel span all the lines are covering, top might be negative.
     pub fn lines_vertical_pixel_span(&self) -> Range<i32> {
         (-(self.stable_range_ascend_px as i32))

@@ -11,13 +11,13 @@ use termwiz::surface::SequenceNo;
 use wezterm_term::{Hyperlink, Line, Screen, StableRowIndex, Terminal};
 
 use crate::{
-    TerminalView, WindowState,
+    TerminalView, ViewState,
     range_ops::{RangeOps, WithLength},
     terminal::{
         ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry,
-        TerminalViewParams, ViewGeometry, cursor::CursorMetrics,
+        TerminalViewParams, TerminalViewGeometry, cursor::CursorMetrics,
     },
-    window_geometry::PixelPoint,
+    view_geometry::PixelPoint,
 };
 use massive_input::Progress;
 use massive_shell::Scene;
@@ -123,7 +123,7 @@ impl TerminalPresenter {
     /// - Visible 0: Top of the screen.
     pub fn update(
         &mut self,
-        window_state: &WindowState,
+        window_state: &ViewState,
         scene: &Scene,
         // View relative mouse pointer coordinates.
         // Architecture: Shouldn't this come via `window_state`?
@@ -469,7 +469,7 @@ impl TerminalPresenter {
         range.map(|r| r.extend(self.selection.mode().unwrap(), &self.terminal.lock()))
     }
 
-    pub fn view_geometry(&self) -> ViewGeometry {
+    pub fn view_geometry(&self) -> TerminalViewGeometry {
         self.view.geometry(self.geometry())
     }
 }

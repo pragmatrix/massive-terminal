@@ -12,9 +12,8 @@ use parking_lot::Mutex;
 use tokio::{pin, select, sync::Notify, task};
 use url::Url;
 use winit::{
-    dpi::PhysicalSize,
-    event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent},
-    window::{CursorIcon, WindowId},
+    event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase},
+    window::CursorIcon,
 };
 
 use portable_pty::{CommandBuilder, PtyPair, native_pty_system};
@@ -22,26 +21,26 @@ use wezterm_term::{
     KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex, Terminal, TerminalConfiguration, color,
 };
 
-use massive_geometry::{Color, Identity, Point};
+use massive_applications::{InstanceContext, InstanceEvent, View, ViewEvent, ViewId};
+use massive_desktop::{Application, Desktop};
+use massive_geometry::Color;
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
-use massive_renderer::{FontManager, FontWeight};
-use massive_scene::{Handle, Location, Matrix};
-use massive_shell::{
-    ApplicationContext, AsyncWindowRenderer, Scene, ShellEvent, ShellWindow, shell,
-};
+use massive_renderer::FontWeight;
+use massive_scene::Matrix;
+use massive_shell::{ApplicationContext, Scene, shell};
 
 mod input;
 mod range_ops;
 mod terminal;
-mod window_geometry;
-mod window_state;
+mod view_geometry;
+mod view_state;
 
 use crate::{
-    input::termwiz::{convert_modifiers, convert_mouse_event},
+    input::termwiz::{convert_modifiers, convert_mouse_event_from_view},
     range_ops::WithLength,
     terminal::*,
-    window_geometry::{PixelPoint, WindowGeometry},
-    window_state::WindowState,
+    view_geometry::{PixelPoint, ViewGeometry},
+    view_state::ViewState,
 };
 
 const TERMINAL_NAME: &str = "MassiveTerminal";
@@ -53,24 +52,30 @@ const APPLICATION_NAME: &str = "Massive Terminal";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    shell::run(async |ctx| MassiveTerminal::new(ctx).await?.run().await)
+    shell::run(run)
+}
+
+async fn run(context: ApplicationContext) -> Result<()> {
+    let applications = vec![Application::new(APPLICATION_NAME, terminal_instance)];
+    let desktop = Desktop::new(applications);
+    desktop.run(context).await
+}
+
+async fn terminal_instance(mut ctx: InstanceContext) -> Result<()> {
+    MassiveTerminal::new(&mut ctx).await?.run(&mut ctx).await
 }
 
 #[derive(Debug)]
 struct MassiveTerminal {
-    context: ApplicationContext,
-    window: ShellWindow,
-    renderer: AsyncWindowRenderer,
-
     #[debug(skip)]
     pty_pair: PtyPair,
 
     scene: Scene,
-    view_matrix: Handle<Matrix>,
+    view: View,
 
-    event_manager: EventManager<WindowEvent>,
+    event_manager: EventManager<ViewEvent>,
 
-    window_state: WindowState,
+    view_state: ViewState,
     presenter: TerminalPresenter,
     // Architecture: This may belong into TerminalState or even TerminalView?
     terminal_scroller: TerminalScroller,
@@ -86,8 +91,9 @@ struct MassiveTerminal {
 }
 
 impl MassiveTerminal {
-    async fn new(context: ApplicationContext) -> Result<Self> {
-        let fonts = FontManager::system();
+    async fn new(ctx: &mut InstanceContext) -> Result<Self> {
+        // Use the shared FontManager from the context
+        let fonts = ctx.fonts();
         // Don't load system fonts for now, this way we get the same result on wasm and local runs.
 
         const JETBRAINS_MONO: &[u8] =
@@ -98,7 +104,8 @@ impl MassiveTerminal {
         // This font is only used for measuring the size of the terminal upfront.
         let font = fonts.get_font(font_ids[0], FontWeight::NORMAL).unwrap();
 
-        let scale_factor = context.primary_monitor_scale_factor();
+        // Architecture: For now, use a fixed scale factor. Desktop should provide this.
+        let scale_factor = 2.0;
         let font_size = DEFAULT_FONT_SIZE * scale_factor as f32;
 
         let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
@@ -110,21 +117,9 @@ impl MassiveTerminal {
         let terminal_geometry = TerminalGeometry::new(terminal_font.cell_size_px(), terminal_size);
 
         let window_geometry =
-            WindowGeometry::from_terminal_geometry(&terminal_geometry, scale_factor, padding_px);
+            ViewGeometry::from_terminal_geometry(&terminal_geometry, scale_factor, padding_px);
 
-        let inner_window_size: PhysicalSize<u32> = window_geometry.inner_size_px().into();
-
-        let window = context.new_window(inner_window_size).await?;
-        window.set_title(APPLICATION_NAME);
-
-        // Ergonomics: Why does the renderer need a camera here this early?
-        let renderer = window
-            .renderer()
-            .with_shapes()
-            .with_text(fonts.clone())
-            .with_background_color(Color::BLACK)
-            .build()
-            .await?;
+        let inner_window_size_px = window_geometry.inner_size_px();
 
         // Use the native pty implementation for the system
         let pty_system = native_pty_system();
@@ -153,18 +148,18 @@ impl MassiveTerminal {
         );
         let last_rendered_seq_no = terminal.current_seqno();
 
-        let scene = context.new_scene();
+        let scene = ctx.new_scene();
 
-        let view_matrix = scene.stage(Matrix::identity());
-        let view_location = scene.stage(Location {
-            parent: None,
-            matrix: view_matrix.clone(),
-        });
+        // Create the view first so we can parent terminal content to it
+        let view = ctx
+            .view((inner_window_size_px.0, inner_window_size_px.1))
+            .with_background_color(Color::BLACK)
+            .build(&scene)?;
 
         let view_params = TerminalViewParams {
             fonts: fonts.clone(),
             font: terminal_font.clone(),
-            parent_location: view_location.clone(),
+            parent_location: view.location().clone(),
         };
 
         let terminal_scroller =
@@ -178,15 +173,15 @@ impl MassiveTerminal {
             &scene,
         );
 
+        // Set initial title
+        view.set_title(APPLICATION_NAME)?;
+
         Ok(Self {
-            context,
-            window,
-            renderer,
             pty_pair,
             scene,
-            view_matrix,
+            view,
             event_manager: EventManager::default(),
-            window_state: WindowState::new(window_geometry),
+            view_state: ViewState::new(window_geometry),
             presenter,
             terminal_scroller,
             selecting: None,
@@ -198,7 +193,7 @@ impl MassiveTerminal {
         &self.presenter.terminal
     }
 
-    async fn run(&mut self) -> Result<()> {
+    async fn run(&mut self, ctx: &mut InstanceContext) -> Result<()> {
         let notify = Arc::new(Notify::new());
         // Read and parse output from the pty with reader
         let reader = self.pty_pair.master.try_clone_reader()?;
@@ -213,7 +208,7 @@ impl MassiveTerminal {
         let mut mouse_pointer_on_view = None;
 
         loop {
-            let shell_event_opt = select! {
+            let instance_event_opt = select! {
                 r = &mut output_dispatcher => {
                     info!("Shell output stopped. Exiting.");
                     return r;
@@ -221,28 +216,27 @@ impl MassiveTerminal {
                 _ = notify.notified() => {
                     None
                 }
-                shell_event = self.context.wait_for_shell_event() => {
-                    Some(shell_event?)
+                instance_event = ctx.wait_for_event() => {
+                    Some(instance_event?)
                 }
             };
 
-            // We have to process window events before going into the update cycle for now because
+            // We have to process view events before going into the update cycle for now because
             // of the borrow checker.
             //
             // Detail: Animations starting here _are_ considered, but not updates.
-            if let Some(shell_event) = &shell_event_opt
-                && let Some(window_event) = shell_event.window_event_for(&self.window)
-            {
-                self.process_window_event(
-                    self.window.id(),
-                    window_event,
-                    &mut mouse_pointer_on_view,
-                )?;
+            if let Some(InstanceEvent::View(view_id, view_event)) = &instance_event_opt {
+                self.process_view_event(*view_id, view_event, &mut mouse_pointer_on_view)?;
             }
 
-            // Idea: Make shell_event opaque and allow checking for animations update in UpdateCycle
-            // that is returned from begin_update_cycle()?
-            if matches!(shell_event_opt, Some(ShellEvent::ApplyAnimations(_))) {
+            // Handle shutdown
+            if matches!(instance_event_opt, Some(InstanceEvent::Shutdown)) {
+                info!("Shutdown requested. Exiting.");
+                return Ok(());
+            }
+
+            // Handle animations
+            if matches!(instance_event_opt, Some(InstanceEvent::ApplyAnimations)) {
                 trace!("Applying animations");
                 self.terminal_scroller.proceed();
             }
@@ -256,69 +250,58 @@ impl MassiveTerminal {
 
                 // Update lines, selection, and cursor.
                 self.presenter
-                    .update(&self.window_state, &self.scene, mouse_pointer_on_view)?;
+                    .update(&self.view_state, &self.scene, mouse_pointer_on_view)?;
             }
 
-            // Center
-
+            // Center the view
             {
-                let inner_size = self.window.inner_size();
+                let view_size = self.view_state.geometry.inner_size_px();
                 let center_transform = {
                     Matrix::from_translation(
                         (
-                            -((inner_size.width / 2) as f64),
-                            -((inner_size.height / 2) as f64),
+                            -((view_size.0 / 2) as f64),
+                            -((view_size.1 / 2) as f64),
                             0.0,
                         )
                             .into(),
                     )
                 };
 
-                self.view_matrix.update_if_changed(center_transform);
+                self.view.matrix().update_if_changed(center_transform);
             }
 
             // Render
-
-            if let Some(shell_event) = shell_event_opt {
-                self.renderer.resize_redraw(&shell_event)?;
-            }
-            self.scene.render_to(&mut self.renderer)?;
+            self.scene.render_to(&mut self.view)?;
 
             // Update mouse cursor shape.
-
             {
                 let cursor_icon = if self.presenter.is_hyperlink_underlined_under_mouse() {
                     CursorIcon::Pointer
                 } else {
                     CursorIcon::Default
                 };
-                self.window.set_cursor(cursor_icon);
+                self.view.set_cursor(cursor_icon)?;
             }
         }
-
-        // Ok(())
     }
 
     // Robustness: May not end the terminal when this returns an error?
     // Architecture: Think about a general strategy about how to handle recoverable errors.
     // Correctness: There are a number of locks on the terminal here, may lock only once.
-    fn process_window_event(
+    fn process_view_event(
         &mut self,
-        window_id: WindowId,
-        window_event: &WindowEvent,
+        view_id: ViewId,
+        view_event: &ViewEvent,
         mouse_pointer_on_view: &mut Option<PixelPoint>,
     ) -> Result<()> {
         let min_movement_distance = self.min_pixel_distance_considered_movement();
 
         let now = Instant::now();
-        let Some(ev) = self
-            .event_manager
-            .add_event(ExternalEvent::from_window_event(
-                window_id,
-                window_event.clone(),
-                now,
-            ))
-        else {
+        let Some(ev) = self.event_manager.add_event(ExternalEvent {
+            scope: view_id,
+            event: view_event.clone(),
+            time: now,
+        }) else {
             // Event is redundant. If we would process them, Clicks in `mc` for example would not
             // work on the first try, because `mc` gets confused by winit's behavior to send a
             // redundant CursorMoved event before ever mouse press / release event.
@@ -327,12 +310,9 @@ impl MassiveTerminal {
 
         let modifiers = ev.states().keyboard_modifiers();
 
-        let window_pos_to_terminal_view = |p| {
-            self.renderer
-                .geometry()
-                .unproject_to_model_z0(p, &self.view_matrix.value())
-                .map(|p| (p.x, p.y).into())
-        };
+        // View-local coordinates are already provided by ViewEvent, identity transform
+        let view_pos_to_terminal_view =
+            |p: massive_geometry::Point| -> Option<PixelPoint> { Some((p.x, p.y).into()) };
 
         {
             let presenter = &mut self.presenter;
@@ -344,9 +324,8 @@ impl MassiveTerminal {
             let mut terminal = terminal.lock();
 
             // Process mouse pointer movements
-
             if let Some(pos) = ev.pos() {
-                let mouse_pointer_pos = window_pos_to_terminal_view(pos);
+                let mouse_pointer_pos = view_pos_to_terminal_view(pos);
                 *mouse_pointer_on_view = mouse_pointer_pos;
 
                 // Refresh implicit hyperlinks.
@@ -371,13 +350,12 @@ impl MassiveTerminal {
             }
 
             // Process events that need to be forwarded to the terminal when mouse reporting is on.
-
             if terminal.is_mouse_grabbed() {
                 Self::may_forward_event_to_terminal(
                     &ev,
                     &mut terminal,
                     &view_geometry,
-                    window_pos_to_terminal_view,
+                    view_pos_to_terminal_view,
                 );
 
                 self.presenter.selection_clear();
@@ -390,7 +368,7 @@ impl MassiveTerminal {
                     {
                         // WezTerm reacts on Click, macOS term on Clicked.
                         Some(MouseGesture::Clicked(point)) => {
-                            if let Some(view_px) = window_pos_to_terminal_view(point) {
+                            if let Some(view_px) = view_pos_to_terminal_view(point) {
                                 let cell_pos = view_geometry.hit_test_cell(view_px);
                                 if let Some(cell) =
                                     view_geometry.get_cell(cell_pos, terminal.screen_mut())
@@ -404,7 +382,7 @@ impl MassiveTerminal {
                             presenter.selection_clear();
                         }
                         Some(MouseGesture::DoubleClick(point)) => {
-                            if let Some(hit) = window_pos_to_terminal_view(point) {
+                            if let Some(hit) = view_pos_to_terminal_view(point) {
                                 // Architecture: May create a MouseGesture::TripleClick instead?
                                 let mode = if self.presenter.selection_in_word_mode_and_selected() {
                                     // This implicitly detects a triple click and then uses line selection.
@@ -419,7 +397,7 @@ impl MassiveTerminal {
                             }
                         }
                         Some(MouseGesture::Movement(movement)) => {
-                            if let Some(hit) = window_pos_to_terminal_view(movement.from) {
+                            if let Some(hit) = view_pos_to_terminal_view(movement.from) {
                                 self.presenter.selection_begin(SelectionMode::Cell, hit);
                             }
                             self.selecting = Some(movement);
@@ -428,7 +406,7 @@ impl MassiveTerminal {
                     },
                     Some(movement) => {
                         if let Some(progress) = movement.track_to(&ev) {
-                            let progress = progress.try_map_or_cancel(window_pos_to_terminal_view);
+                            let progress = progress.try_map_or_cancel(view_pos_to_terminal_view);
 
                             self.presenter.selection_progress(&self.scene, progress);
                             if !self.presenter.selection_can_progress() {
@@ -441,21 +419,20 @@ impl MassiveTerminal {
         }
 
         // Process remaining events
-
-        match window_event {
-            WindowEvent::Resized(physical_size) => {
-                self.resize((*physical_size).into())?;
+        match view_event {
+            ViewEvent::Resized(width, height) => {
+                self.resize((*width, *height))?;
             }
-            WindowEvent::Focused(focused) => {
+            ViewEvent::Focused(focused) => {
                 // Architecture: Should we track the focused state of the window in the EventAggregator?
                 // Architecture: Move this to the part where the terminal is locked above.
-                self.window_state.focused = *focused;
+                self.view_state.focused = *focused;
                 self.terminal().lock().focus_changed(*focused);
             }
-            WindowEvent::MouseWheel {
-                device_id: _,
+            ViewEvent::MouseWheel {
                 delta,
                 phase: TouchPhase::Moved,
+                ..
             } => {
                 let delta_px = match delta {
                     MouseScrollDelta::LineDelta(_, delta) => {
@@ -466,28 +443,31 @@ impl MassiveTerminal {
 
                 self.presenter.scroll_delta_px(-delta_px)
             }
-            WindowEvent::KeyboardInput { event, .. } => {
-                if let Some((key, modifiers)) = input::termwiz::convert_key_event(event, modifiers)
+            ViewEvent::KeyboardInput { event, .. } => {
+                if let Some((key, key_modifiers)) =
+                    input::termwiz::convert_key_event(event, modifiers)
                 {
                     match event.state {
                         ElementState::Pressed => match key {
-                            KeyCode::Char('c') if modifiers == KeyModifiers::SUPER => {
+                            KeyCode::Char('c') if key_modifiers == KeyModifiers::SUPER => {
                                 self.copy()?;
                             }
-                            KeyCode::Char('v') if modifiers == KeyModifiers::SUPER => {
+                            KeyCode::Char('v') if key_modifiers == KeyModifiers::SUPER => {
                                 self.paste()?
                             }
                             _ => {
-                                // Architecture: Should probably move into the presenter which owns terminal now.
-                                self.terminal().lock().key_down(key, modifiers)?;
+                                self.terminal().lock().key_down(key, key_modifiers)?;
                                 self.presenter.enable_autoscroll();
                             }
                         },
                         ElementState::Released => {
-                            self.terminal().lock().key_up(key, modifiers)?;
+                            self.terminal().lock().key_up(key, key_modifiers)?;
                         }
                     }
                 }
+            }
+            ViewEvent::CloseRequested => {
+                // Desktop handles close requests
             }
             _ => {}
         }
@@ -496,14 +476,14 @@ impl MassiveTerminal {
 
     // Architecture: Is the presenter responsible for this?
     fn may_forward_event_to_terminal(
-        ev: &Event<WindowEvent>,
+        ev: &Event<ViewEvent>,
         terminal: &mut Terminal,
-        geometry: &ViewGeometry,
-        map_to_view: impl Fn(Point) -> Option<PixelPoint>,
+        geometry: &TerminalViewGeometry,
+        map_to_view: impl Fn(massive_geometry::Point) -> Option<PixelPoint>,
     ) {
         debug_assert!(terminal.is_mouse_grabbed());
 
-        let Some((kind, button, point)) = convert_mouse_event(ev) else {
+        let Some((kind, button, point)) = convert_mouse_event_from_view(ev) else {
             return;
         };
 
@@ -541,9 +521,8 @@ impl MassiveTerminal {
         }
     }
 
-    fn resize(&mut self, new_window_size_px: (u32, u32)) -> Result<()> {
-        // First the window geometry.
-        let suggested_terminal_size_px = self.window_state.geometry.resize(new_window_size_px);
+    fn resize(&mut self, new_view_size_px: (u32, u32)) -> Result<()> {
+        let suggested_terminal_size_px = self.view_state.geometry.resize(new_view_size_px);
         if self.presenter.resize(suggested_terminal_size_px)? {
             self.pty_pair
                 .master
@@ -555,7 +534,8 @@ impl MassiveTerminal {
 
     fn min_pixel_distance_considered_movement(&self) -> f64 {
         const LOGICAL_POINTS_CONSIDERED_MOVEMENT: f64 = 5.0;
-        LOGICAL_POINTS_CONSIDERED_MOVEMENT * self.context.primary_monitor_scale_factor()
+        // Architecture: For now, use a fixed scale factor
+        LOGICAL_POINTS_CONSIDERED_MOVEMENT * 2.0
     }
 }
 

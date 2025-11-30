@@ -22,6 +22,8 @@ metrics = ["massive-shell/metrics"]
 wezterm-term.workspace = true
 
 massive-animation.workspace = true
+massive-applications.workspace = true
+massive-desktop.workspace = true
 massive-geometry.workspace = true
 massive-input.workspace = true
 massive-renderer.workspace = true
@@ -58,6 +60,7 @@ winit.workspace = true # Ergonomics: Get rid of the winit dependency. Used for b
 
 massive-animation = { path = "massive/animation" }
 massive-applications = { path = "massive/applications" }
+massive-desktop = { path = "massive/desktop" }
 massive-geometry = { path = "massive/geometry" }
 massive-input = { path = "massive/input" }
 massive-renderer = { path = "massive/renderer" }
