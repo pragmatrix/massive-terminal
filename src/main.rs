@@ -105,7 +105,7 @@ impl MassiveTerminal {
         let font = fonts.get_font(font_ids[0], FontWeight::NORMAL).unwrap();
 
         // Architecture: For now, use a fixed scale factor. Desktop should provide this.
-        let scale_factor = 2.0;
+        let scale_factor = ctx.primary_monitor_scale_factor();
         let font_size = DEFAULT_FONT_SIZE * scale_factor as f32;
 
         let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
