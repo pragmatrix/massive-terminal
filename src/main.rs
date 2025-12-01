@@ -226,7 +226,12 @@ impl MassiveTerminal {
             //
             // Detail: Animations starting here _are_ considered, but not updates.
             if let Some(InstanceEvent::View(view_id, view_event)) = &instance_event_opt {
-                self.process_view_event(*view_id, view_event, &mut mouse_pointer_on_view)?;
+                self.process_view_event(
+                    *view_id,
+                    view_event,
+                    &mut mouse_pointer_on_view,
+                    ctx.primary_monitor_scale_factor(),
+                )?;
             }
 
             // Handle shutdown
@@ -293,8 +298,10 @@ impl MassiveTerminal {
         view_id: ViewId,
         view_event: &ViewEvent,
         mouse_pointer_on_view: &mut Option<PixelPoint>,
+        monitor_scale_factor: f64,
     ) -> Result<()> {
-        let min_movement_distance = self.min_pixel_distance_considered_movement();
+        let min_movement_distance =
+            self.min_pixel_distance_considered_movement(monitor_scale_factor);
 
         let now = Instant::now();
         let Some(ev) = self.event_manager.add_event(ExternalEvent {
@@ -532,10 +539,10 @@ impl MassiveTerminal {
         Ok(())
     }
 
-    fn min_pixel_distance_considered_movement(&self) -> f64 {
+    fn min_pixel_distance_considered_movement(&self, scale_factor: f64) -> f64 {
         const LOGICAL_POINTS_CONSIDERED_MOVEMENT: f64 = 5.0;
         // Architecture: For now, use a fixed scale factor
-        LOGICAL_POINTS_CONSIDERED_MOVEMENT * 2.0
+        LOGICAL_POINTS_CONSIDERED_MOVEMENT * scale_factor
     }
 }
 
