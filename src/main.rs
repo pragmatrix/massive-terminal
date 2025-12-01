@@ -116,10 +116,10 @@ impl MassiveTerminal {
 
         let terminal_geometry = TerminalGeometry::new(terminal_font.cell_size_px(), terminal_size);
 
-        let window_geometry =
+        let view_geometry =
             ViewGeometry::from_terminal_geometry(&terminal_geometry, scale_factor, padding_px);
 
-        let inner_window_size_px = window_geometry.inner_size_px();
+        let view_size_px = view_geometry.inner_size_px();
 
         // Use the native pty implementation for the system
         let pty_system = native_pty_system();
@@ -152,7 +152,7 @@ impl MassiveTerminal {
 
         // Create the view first so we can parent terminal content to it
         let view = ctx
-            .view((inner_window_size_px.0, inner_window_size_px.1))
+            .view((view_size_px.0, view_size_px.1))
             .with_background_color(Color::BLACK)
             .build(&scene)?;
 
@@ -181,7 +181,7 @@ impl MassiveTerminal {
             scene,
             view,
             event_manager: EventManager::default(),
-            view_state: ViewState::new(window_geometry),
+            view_state: ViewState::new(view_geometry),
             presenter,
             terminal_scroller,
             selecting: None,
