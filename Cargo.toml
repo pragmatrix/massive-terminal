@@ -30,6 +30,7 @@ massive-renderer.workspace = true
 massive-scene.workspace = true
 massive-shapes.workspace = true
 massive-shell.workspace = true
+massive-util.workspace = true
 
 anyhow.workspace = true
 arboard.workspace = true
@@ -67,6 +68,7 @@ massive-renderer = { path = "massive/renderer" }
 massive-scene = { path = "massive/scene" }
 massive-shapes = { path = "massive/shapes" }
 massive-shell = { path = "massive/shell" }
+massive-util = { path = "massive/util" }
 
 anyhow = { version = "1.0.99" }
 approx = "0.5.1"

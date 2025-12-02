@@ -5,6 +5,7 @@ use derive_more::Debug;
 use log::{debug, info, trace, warn};
 
 use massive_animation::TimeScale;
+use massive_util::Progress;
 use parking_lot::Mutex;
 use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
@@ -15,11 +16,10 @@ use crate::{
     range_ops::{RangeOps, WithLength},
     terminal::{
         ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry,
-        TerminalViewParams, TerminalViewGeometry, cursor::CursorMetrics,
+        TerminalViewGeometry, TerminalViewParams, cursor::CursorMetrics,
     },
     view_geometry::PixelPoint,
 };
-use massive_input::Progress;
 use massive_shell::Scene;
 
 /// The presentation logic and state we need to store to properly detect changes in the wezterm
