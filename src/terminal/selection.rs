@@ -6,7 +6,7 @@ use wezterm_term::{DoubleClickRange, StableRowIndex, Terminal};
 use crate::{
     range_ops::{RangeOps, WithLength},
     terminal::{CellPos, LogicalLine, get_logical_lines},
-    window_geometry::PixelPoint,
+    view_geometry::PixelPoint,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

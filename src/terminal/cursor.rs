@@ -3,7 +3,7 @@
 use termwiz::surface::CursorVisibility;
 use wezterm_term::{CursorPosition, StableRowIndex, Terminal};
 
-use crate::{terminal::ScreenGeometry, window_state::WindowState};
+use crate::{terminal::ScreenGeometry, view_state::ViewState};
 
 #[derive(Debug, Clone)]
 pub struct CursorMetrics {
@@ -17,7 +17,7 @@ impl CursorMetrics {
     pub fn new(
         terminal: &mut Terminal,
         screen_geometry: &ScreenGeometry,
-        window_state: &WindowState,
+        window_state: &ViewState,
     ) -> Option<Self> {
         let pos = terminal.cursor_pos();
         if pos.visibility == CursorVisibility::Hidden {

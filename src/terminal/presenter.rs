@@ -3,24 +3,25 @@ use std::{ops::Range, sync::Arc};
 use anyhow::Result;
 use derive_more::Debug;
 use log::{debug, info, trace, warn};
-
-use massive_animation::TimeScale;
 use parking_lot::Mutex;
+
 use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{Hyperlink, Line, Screen, StableRowIndex, Terminal};
 
+use massive_animation::TimeScale;
+use massive_shell::Scene;
+use massive_util::Progress;
+
 use crate::{
-    TerminalView, WindowState,
+    TerminalView, ViewState,
     range_ops::{RangeOps, WithLength},
     terminal::{
         ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry,
-        TerminalViewParams, ViewGeometry, cursor::CursorMetrics,
+        TerminalViewGeometry, TerminalViewParams, cursor::CursorMetrics,
     },
-    window_geometry::PixelPoint,
+    view_geometry::PixelPoint,
 };
-use massive_input::Progress;
-use massive_shell::Scene;
 
 /// The presentation logic and state we need to store to properly detect changes in the wezterm
 /// Terminal instance and to update our view.
@@ -123,7 +124,7 @@ impl TerminalPresenter {
     /// - Visible 0: Top of the screen.
     pub fn update(
         &mut self,
-        window_state: &WindowState,
+        window_state: &ViewState,
         scene: &Scene,
         // View relative mouse pointer coordinates.
         // Architecture: Shouldn't this come via `window_state`?
@@ -469,7 +470,7 @@ impl TerminalPresenter {
         range.map(|r| r.extend(self.selection.mode().unwrap(), &self.terminal.lock()))
     }
 
-    pub fn view_geometry(&self) -> ViewGeometry {
+    pub fn view_geometry(&self) -> TerminalViewGeometry {
         self.view.geometry(self.geometry())
     }
 }

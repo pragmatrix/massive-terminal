@@ -14,7 +14,7 @@ pub struct PixelUnit;
 pub type PixelPoint = euclid::Point2D<f64, PixelUnit>;
 
 #[derive(Debug)]
-pub struct WindowGeometry {
+pub struct ViewGeometry {
     _scale_factor: f64,
     inner_size_px: (u32, u32),
 
@@ -22,7 +22,7 @@ pub struct WindowGeometry {
     padding_px: u32,
 }
 
-impl WindowGeometry {
+impl ViewGeometry {
     pub fn from_terminal_geometry(
         terminal_geometry: &TerminalGeometry,
         scale_factor: f64,

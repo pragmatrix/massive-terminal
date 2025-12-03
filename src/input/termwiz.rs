@@ -4,13 +4,14 @@
 //! (as used by `wezterm-term`).
 
 use winit::{
-    event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, TouchPhase, WindowEvent},
+    event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, TouchPhase},
     keyboard::{Key, ModifiersState, NamedKey},
 };
 
 use termwiz::input::{KeyCode, Modifiers};
 use wezterm_term::{MouseButton, MouseEventKind};
 
+use massive_applications::ViewEvent;
 use massive_geometry::Point;
 use massive_input::Event;
 
@@ -131,24 +132,23 @@ fn convert_named_key(named: &NamedKey) -> Option<KeyCode> {
     }
 }
 
-pub fn convert_mouse_event(
-    ev: &Event<WindowEvent>,
+/// Convert an `Event<ViewEvent>` to mouse event data for terminal forwarding.
+/// Returns `(MouseEventKind, MouseButton, Point)` if the event is a mouse event.
+pub fn convert_mouse_event_from_view(
+    ev: &Event<ViewEvent>,
 ) -> Option<(MouseEventKind, MouseButton, Point)> {
-    let window_event = ev.event();
+    let view_event = ev.event();
     let pos = ev.pos()?;
 
-    let (kind, button) = match window_event {
-        WindowEvent::CursorMoved {
-            device_id,
-            position: _,
-        } => (
+    let (kind, button) = match view_event {
+        ViewEvent::CursorMoved { device_id, .. } => (
             MouseEventKind::Move,
             mouse_button_pressed_on_device(ev, *device_id).unwrap_or(MouseButton::None),
         ),
-        WindowEvent::MouseWheel {
-            device_id: _,
+        ViewEvent::MouseWheel {
             delta: MouseScrollDelta::LineDelta(xd, 0.0),
             phase: TouchPhase::Moved,
+            ..
         } => (
             MouseEventKind::Press,
             if *xd < 0.0 {
@@ -157,10 +157,10 @@ pub fn convert_mouse_event(
                 MouseButton::WheelRight(xd.round() as usize)
             },
         ),
-        WindowEvent::MouseWheel {
-            device_id: _,
+        ViewEvent::MouseWheel {
             delta: MouseScrollDelta::LineDelta(0.0, yd),
             phase: TouchPhase::Moved,
+            ..
         } => (
             MouseEventKind::Press,
             if *yd < 0.0 {
@@ -169,11 +169,7 @@ pub fn convert_mouse_event(
                 MouseButton::WheelDown(yd.round() as usize)
             },
         ),
-        WindowEvent::MouseInput {
-            device_id: _,
-            state,
-            button,
-        } => (
+        ViewEvent::MouseInput { state, button, .. } => (
             match state {
                 ElementState::Pressed => MouseEventKind::Press,
                 ElementState::Released => MouseEventKind::Release,
@@ -187,7 +183,7 @@ pub fn convert_mouse_event(
 }
 
 fn mouse_button_pressed_on_device(
-    ev: &Event<WindowEvent>,
+    ev: &Event<ViewEvent>,
     device_id: DeviceId,
 ) -> Option<MouseButton> {
     let (button, _) = ev
