@@ -3,13 +3,15 @@ use std::{ops::Range, sync::Arc};
 use anyhow::Result;
 use derive_more::Debug;
 use log::{debug, info, trace, warn};
-
-use massive_animation::TimeScale;
-use massive_util::Progress;
 use parking_lot::Mutex;
+
 use rangeset::RangeSet;
 use termwiz::surface::SequenceNo;
 use wezterm_term::{Hyperlink, Line, Screen, StableRowIndex, Terminal};
+
+use massive_animation::TimeScale;
+use massive_shell::Scene;
+use massive_util::Progress;
 
 use crate::{
     TerminalView, ViewState,
@@ -20,7 +22,6 @@ use crate::{
     },
     view_geometry::PixelPoint,
 };
-use massive_shell::Scene;
 
 /// The presentation logic and state we need to store to properly detect changes in the wezterm
 /// Terminal instance and to update our view.

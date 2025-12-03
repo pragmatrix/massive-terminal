@@ -23,7 +23,7 @@ use wezterm_term::{
 
 use massive_applications::{InstanceContext, InstanceEvent, View, ViewEvent, ViewId};
 use massive_desktop::{Application, Desktop};
-use massive_geometry::Color;
+use massive_geometry::{Color, Point};
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_renderer::FontWeight;
 use massive_scene::Matrix;
@@ -104,7 +104,6 @@ impl MassiveTerminal {
         // This font is only used for measuring the size of the terminal upfront.
         let font = fonts.get_font(font_ids[0], FontWeight::NORMAL).unwrap();
 
-        // Architecture: For now, use a fixed scale factor. Desktop should provide this.
         let scale_factor = ctx.primary_monitor_scale_factor();
         let font_size = DEFAULT_FONT_SIZE * scale_factor as f32;
 
@@ -207,6 +206,10 @@ impl MassiveTerminal {
         // `WindowState`). Not only from events coming in.
         let mut mouse_pointer_on_view = None;
 
+        // Architecture: This does not belong here.
+        let min_movement_distance =
+            self.min_pixel_distance_considered_movement(ctx.primary_monitor_scale_factor());
+
         loop {
             let instance_event_opt = select! {
                 r = &mut output_dispatcher => {
@@ -230,7 +233,7 @@ impl MassiveTerminal {
                     *view_id,
                     view_event,
                     &mut mouse_pointer_on_view,
-                    ctx.primary_monitor_scale_factor(),
+                    min_movement_distance,
                 )?;
             }
 
@@ -298,11 +301,8 @@ impl MassiveTerminal {
         view_id: ViewId,
         view_event: &ViewEvent,
         mouse_pointer_on_view: &mut Option<PixelPoint>,
-        monitor_scale_factor: f64,
+        min_movement_distance: f64,
     ) -> Result<()> {
-        let min_movement_distance =
-            self.min_pixel_distance_considered_movement(monitor_scale_factor);
-
         let now = Instant::now();
         let Some(ev) = self.event_manager.add_event(ExternalEvent {
             scope: view_id,
@@ -318,6 +318,8 @@ impl MassiveTerminal {
         let modifiers = ev.states().keyboard_modifiers();
 
         // View-local coordinates are already provided by ViewEvent, identity transform
+        //
+        // Robustness: What about padding, etc?
         let view_pos_to_terminal_view =
             |p: massive_geometry::Point| -> Option<PixelPoint> { Some((p.x, p.y).into()) };
 
@@ -486,7 +488,7 @@ impl MassiveTerminal {
         ev: &Event<ViewEvent>,
         terminal: &mut Terminal,
         geometry: &TerminalViewGeometry,
-        map_to_view: impl Fn(massive_geometry::Point) -> Option<PixelPoint>,
+        map_to_view: impl Fn(Point) -> Option<PixelPoint>,
     ) {
         debug_assert!(terminal.is_mouse_grabbed());
 
@@ -541,7 +543,6 @@ impl MassiveTerminal {
 
     fn min_pixel_distance_considered_movement(&self, scale_factor: f64) -> f64 {
         const LOGICAL_POINTS_CONSIDERED_MOVEMENT: f64 = 5.0;
-        // Architecture: For now, use a fixed scale factor
         LOGICAL_POINTS_CONSIDERED_MOVEMENT * scale_factor
     }
 }

@@ -8,39 +8,36 @@ use winit::{
     keyboard::{Key, ModifiersState, NamedKey},
 };
 
-use massive_applications::ViewEvent;
-use termwiz::input::{KeyCode, Modifiers as TermwizModifiers};
+use termwiz::input::{KeyCode, Modifiers};
 use wezterm_term::{MouseButton, MouseEventKind};
 
+use massive_applications::ViewEvent;
 use massive_geometry::Point;
 use massive_input::Event;
 
 /// Convert a full `winit` `KeyEvent` to a `(KeyCode, Modifiers)` pair.
 /// Returns `None` when the event shouldn't be forwarded to the terminal
 /// (e.g. pure modifier changes or unsupported keys).
-pub fn convert_key_event(
-    event: &KeyEvent,
-    mods: ModifiersState,
-) -> Option<(KeyCode, TermwizModifiers)> {
+pub fn convert_key_event(event: &KeyEvent, mods: ModifiersState) -> Option<(KeyCode, Modifiers)> {
     let keycode = convert_key(&event.logical_key)?;
     let converted_mods = convert_modifiers(mods);
     Some((keycode, converted_mods))
 }
 
 /// Convert a `winit` `ModifiersState` to `termwiz` `Modifiers`.
-pub fn convert_modifiers(mods: ModifiersState) -> TermwizModifiers {
-    let mut out = TermwizModifiers::NONE;
+pub fn convert_modifiers(mods: ModifiersState) -> Modifiers {
+    let mut out = Modifiers::NONE;
     if mods.shift_key() {
-        out |= TermwizModifiers::SHIFT;
+        out |= Modifiers::SHIFT;
     }
     if mods.control_key() {
-        out |= TermwizModifiers::CTRL;
+        out |= Modifiers::CTRL;
     }
     if mods.alt_key() {
-        out |= TermwizModifiers::ALT;
+        out |= Modifiers::ALT;
     }
     if mods.super_key() {
-        out |= TermwizModifiers::SUPER;
+        out |= Modifiers::SUPER;
     }
     out
 }
@@ -146,7 +143,7 @@ pub fn convert_mouse_event_from_view(
     let (kind, button) = match view_event {
         ViewEvent::CursorMoved { device_id, .. } => (
             MouseEventKind::Move,
-            mouse_button_pressed_on_view_device(ev, *device_id).unwrap_or(MouseButton::None),
+            mouse_button_pressed_on_device(ev, *device_id).unwrap_or(MouseButton::None),
         ),
         ViewEvent::MouseWheel {
             delta: MouseScrollDelta::LineDelta(xd, 0.0),
@@ -185,7 +182,7 @@ pub fn convert_mouse_event_from_view(
     Some((kind, button, pos))
 }
 
-fn mouse_button_pressed_on_view_device(
+fn mouse_button_pressed_on_device(
     ev: &Event<ViewEvent>,
     device_id: DeviceId,
 ) -> Option<MouseButton> {
