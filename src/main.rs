@@ -290,6 +290,13 @@ impl MassiveTerminal {
                 };
                 self.view.set_cursor(cursor_icon)?;
             }
+
+            // Rationale: In debug runs, an instance is capable of starving the desktop completely.
+            // This is a basic limitation of tokio for which there does not seem to be a workaround.
+            //
+            // Architecture: In the long run, we need to run instances in an isolated context. At
+            // least in a separate thread. They can then power up a separate tokio runtime.
+            tokio::task::yield_now().await;
         }
     }
 
