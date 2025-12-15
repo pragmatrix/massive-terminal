@@ -23,7 +23,7 @@ use wezterm_term::{
 
 use massive_applications::{InstanceContext, InstanceEvent, View, ViewEvent, ViewId};
 use massive_desktop::{Application, Desktop};
-use massive_geometry::{Color, Point};
+use massive_geometry::{Color, Point, SizePx};
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_renderer::FontWeight;
 use massive_scene::Matrix;
@@ -109,9 +109,9 @@ impl MassiveTerminal {
 
         let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
 
-        let terminal_size = DEFAULT_TERMINAL_SIZE;
+        let terminal_size: SizeCell = DEFAULT_TERMINAL_SIZE.into();
 
-        let padding_px = terminal_font.cell_size_px().0 / 2;
+        let padding_px = terminal_font.cell_size_px().width / 2;
 
         let terminal_geometry = TerminalGeometry::new(terminal_font.cell_size_px(), terminal_size);
 
@@ -151,7 +151,7 @@ impl MassiveTerminal {
 
         // Create the view first so we can parent terminal content to it
         let view = ctx
-            .view((view_size_px.0, view_size_px.1))
+            .view(view_size_px)
             .with_background_color(Color::BLACK)
             .build(&scene)?;
 
@@ -267,8 +267,8 @@ impl MassiveTerminal {
                 let center_transform = {
                     Matrix::from_translation(
                         (
-                            -((view_size.0 / 2) as f64),
-                            -((view_size.1 / 2) as f64),
+                            -((view_size.width / 2) as f64),
+                            -((view_size.height / 2) as f64),
                             0.0,
                         )
                             .into(),
@@ -436,8 +436,8 @@ impl MassiveTerminal {
 
         // Process remaining events
         match view_event {
-            ViewEvent::Resized(width, height) => {
-                self.resize((*width, *height))?;
+            ViewEvent::Resized(size) => {
+                self.resize(*size)?;
             }
             ViewEvent::Focused(focused) => {
                 // Architecture: Should we track the focused state of the window in the EventAggregator?
@@ -537,7 +537,7 @@ impl MassiveTerminal {
         }
     }
 
-    fn resize(&mut self, new_view_size_px: (u32, u32)) -> Result<()> {
+    fn resize(&mut self, new_view_size_px: SizePx) -> Result<()> {
         let suggested_terminal_size_px = self.view_state.geometry.resize(new_view_size_px);
         if self.presenter.resize(suggested_terminal_size_px)? {
             self.pty_pair

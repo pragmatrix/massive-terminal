@@ -2,7 +2,8 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
 use derive_more::Debug;
-use log::{debug, info, trace, warn};
+use log::{info, trace, warn};
+use massive_geometry::SizePx;
 use parking_lot::Mutex;
 
 use rangeset::RangeSet;
@@ -87,7 +88,7 @@ impl TerminalPresenter {
     }
 
     // Returns `true` if the terminal size in cells changed.
-    pub fn resize(&mut self, new_size_px: (u32, u32)) -> Result<bool> {
+    pub fn resize(&mut self, new_size_px: SizePx) -> Result<bool> {
         let mut new_geometry = self.geometry;
         new_geometry.resize_px(new_size_px);
         if new_geometry == self.geometry {

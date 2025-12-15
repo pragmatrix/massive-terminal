@@ -7,7 +7,6 @@ use cosmic_text::{
 };
 use euclid::Point2D;
 use rangeset::RangeSet;
-use tuple::Map;
 
 use termwiz::{cellcluster::CellCluster, color::ColorAttribute, surface::CursorShape};
 use wezterm_term::{
@@ -25,7 +24,7 @@ use crate::{
     view_geometry::CellRect,
 };
 use massive_animation::{Animated, Interpolation};
-use massive_geometry::{Color, Point, Rect, Size};
+use massive_geometry::{Color, PixelUnit, Point, Rect, Size};
 use massive_renderer::FontManager;
 use massive_scene::{Handle, Location, Visual};
 use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
@@ -113,7 +112,7 @@ impl TerminalView {
         scene: &Scene,
         scroll_offset: StableRowIndex,
     ) -> Self {
-        let line_height = params.font.cell_size_px().1;
+        let line_height = params.font.cell_size_px().height;
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * line_height as u64;
         let locations = ScrollLocations::new(
@@ -174,7 +173,7 @@ impl TerminalView {
     }
 
     fn line_height_px(&self) -> u32 {
-        self.font().cell_size_px().1
+        self.font().cell_size_px().height
     }
 
     fn font(&self) -> &TerminalFont {
@@ -212,7 +211,7 @@ impl TerminalView {
         assert!(rows >= 1);
 
         // First pixel visible inside the screen viewed.
-        let line_height_px = self.font().cell_size_px().1 as i64;
+        let line_height_px = self.font().cell_size_px().height as i64;
 
         let topmost_pixel_line_visible = self.locations.scroll_offset_px();
         let topmost_stable_render_line = topmost_pixel_line_visible.div_euclid(line_height_px);
@@ -467,7 +466,7 @@ impl TerminalView {
         // Performance: Can we use some capacity here? Use a temporary array here?
         let mut overlay_shapes = Vec::new();
         let mut left = 0;
-        let cell_size_px = self.font().cell_size_px().0 as i64;
+        let cell_size_px = self.font().cell_size_px().width as i64;
 
         // Optimization: Combine clusters with compatible attributes. Colors and widths can vary
         // inside a GlyphRun.
@@ -607,8 +606,8 @@ impl TerminalView {
 
         let size: Size = (
             // Precision: We keep multiplication in the u32 range here. Unlikely it's overflowing.
-            (cluster.width as u32 * font.cell_size_px().0) as f64,
-            font.cell_size_px().1 as f64,
+            (cluster.width as u32 * font.cell_size_px().width) as f64,
+            font.cell_size_px().height as f64,
         )
             .into();
 
@@ -657,7 +656,7 @@ impl TerminalView {
 
             let size: Size = (
                 // Precision: We keep multiplication in the u32 range here. Unlikely it's overflowing.
-                (cluster.width as u32 * font.cell_size_px().0) as f64,
+                (cluster.width as u32 * font.cell_size_px().width) as f64,
                 underline_metrics.thickness as f64,
             )
                 .into();
@@ -719,20 +718,20 @@ impl TerminalView {
     ) -> Shape {
         let cursor_color = self.color_palette.cursor_bg;
         let cell_size = self.font().cell_size_px();
-        let left = cell_size.0 * column as u32;
+        let left = cell_size.width * column as u32;
 
         // Feature: The size of the bar / underline should be derived from the font size / underline
         // position / thickness, not from the cell size.
-        let stroke_thickness = ((cell_size.0 as f64 / 4.) + 1.).trunc();
+        let stroke_thickness = ((cell_size.width as f64 / 4.) + 1.).trunc();
 
-        let cell_width = cell_size.0 * width as u32;
+        let cell_width = cell_size.width * width as u32;
 
         let rect = match ty {
             CursorShapeType::Rect => {
                 return StrokeRect::new(
                     Rect::new(
                         (left as _, y_offset_px as _),
-                        (cell_width as _, cell_size.1 as _),
+                        (cell_width as _, cell_size.height as _),
                     ),
                     Size::new(stroke_thickness, stroke_thickness),
                     color::from_srgba(cursor_color),
@@ -741,7 +740,7 @@ impl TerminalView {
             }
             CursorShapeType::Block => Rect::new(
                 (left as _, y_offset_px as _),
-                (cell_width as _, cell_size.1 as _),
+                (cell_width as _, cell_size.height as _),
             ),
             CursorShapeType::Underline => Rect::new(
                 (
@@ -753,7 +752,7 @@ impl TerminalView {
             CursorShapeType::Bar => Rect::new(
                 (left as _, y_offset_px as _),
                 // Ergonomics: Shouldn't we multiply stroke_thickness with width?
-                (stroke_thickness, cell_size.1 as _),
+                (stroke_thickness, cell_size.height as _),
             ),
         };
 
@@ -776,7 +775,7 @@ impl TerminalView {
                 // numerical stability in the matrix, we should clip the rects to the visible range.
                 let rects_stable =
                     Self::selection_rects(&selection_range, terminal_geometry.columns());
-                let cell_size = terminal_geometry.cell_size_px.map(f64::from);
+                let cell_size = terminal_geometry.cell_size_px.cast::<f64>();
                 let location_stable_index = selection_range.stable_rows().start;
 
                 let (location, top_px) = self
@@ -788,7 +787,8 @@ impl TerminalView {
 
                 let rects_final = rects_stable.iter().map(|r| {
                     r.to_f64()
-                        .scale(cell_size.0, cell_size.1)
+                        .scale(cell_size.width, cell_size.height)
+                        .cast_unit::<PixelUnit>()
                         .translate((0., translation_offset as f64).into())
                 });
 
