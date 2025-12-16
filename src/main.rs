@@ -1,6 +1,6 @@
 use std::{
     io::{self, ErrorKind},
-    sync::Arc,
+    sync::{Arc, Weak},
     time::{Duration, Instant},
 };
 
@@ -23,10 +23,9 @@ use wezterm_term::{
 
 use massive_applications::{InstanceContext, InstanceEvent, View, ViewEvent, ViewId};
 use massive_desktop::{Application, Desktop};
-use massive_geometry::{Color, Point};
+use massive_geometry::{Color, Point, SizePx};
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_renderer::FontWeight;
-use massive_scene::Matrix;
 use massive_shell::{ApplicationContext, Scene, shell};
 
 mod input;
@@ -109,9 +108,9 @@ impl MassiveTerminal {
 
         let terminal_font = TerminalFont::from_cosmic_text(font, font_size)?;
 
-        let terminal_size = DEFAULT_TERMINAL_SIZE;
+        let terminal_size: SizeCell = DEFAULT_TERMINAL_SIZE.into();
 
-        let padding_px = terminal_font.cell_size_px().0 / 2;
+        let padding_px = terminal_font.cell_size_px().width / 2;
 
         let terminal_geometry = TerminalGeometry::new(terminal_font.cell_size_px(), terminal_size);
 
@@ -151,7 +150,7 @@ impl MassiveTerminal {
 
         // Create the view first so we can parent terminal content to it
         let view = ctx
-            .view((view_size_px.0, view_size_px.1))
+            .view(view_size_px)
             .with_background_color(Color::BLACK)
             .build(&scene)?;
 
@@ -198,7 +197,7 @@ impl MassiveTerminal {
         let reader = self.pty_pair.master.try_clone_reader()?;
 
         let output_dispatcher =
-            dispatch_output_to_terminal(reader, self.terminal().clone(), notify.clone());
+            dispatch_output_to_terminal(reader, Arc::downgrade(self.terminal()), notify.clone());
 
         pin!(output_dispatcher);
 
@@ -259,23 +258,6 @@ impl MassiveTerminal {
                 // Update lines, selection, and cursor.
                 self.presenter
                     .update(&self.view_state, &self.scene, mouse_pointer_on_view)?;
-            }
-
-            // Center the view
-            {
-                let view_size = self.view_state.geometry.inner_size_px();
-                let center_transform = {
-                    Matrix::from_translation(
-                        (
-                            -((view_size.0 / 2) as f64),
-                            -((view_size.1 / 2) as f64),
-                            0.0,
-                        )
-                            .into(),
-                    )
-                };
-
-                self.view.matrix().update_if_changed(center_transform);
             }
 
             // Render
@@ -436,8 +418,8 @@ impl MassiveTerminal {
 
         // Process remaining events
         match view_event {
-            ViewEvent::Resized(width, height) => {
-                self.resize((*width, *height))?;
+            ViewEvent::Resized(size) => {
+                self.resize(*size)?;
             }
             ViewEvent::Focused(focused) => {
                 // Architecture: Should we track the focused state of the window in the EventAggregator?
@@ -537,7 +519,7 @@ impl MassiveTerminal {
         }
     }
 
-    fn resize(&mut self, new_view_size_px: (u32, u32)) -> Result<()> {
+    fn resize(&mut self, new_view_size_px: SizePx) -> Result<()> {
         let suggested_terminal_size_px = self.view_state.geometry.resize(new_view_size_px);
         if self.presenter.resize(suggested_terminal_size_px)? {
             self.pty_pair
@@ -643,9 +625,14 @@ impl TerminalConfiguration for MassiveTerminalConfiguration {
     }
 }
 
+// Detail: pass terminal as a Weak reference handle, because otherwise we would lock the terminal in
+// memory, which locks the writer in memory, which causes the child process (usually a shell) to
+// never terminate and therefore read() never to return here.
+//
+// An alternative is to use the child handle and explicitly invoke kill() on the ChildKiller trait.
 async fn dispatch_output_to_terminal(
     mut reader: impl io::Read + Send + 'static,
-    terminal: Arc<Mutex<Terminal>>,
+    terminal: Weak<Mutex<Terminal>>,
     notify: Arc<Notify>,
 ) -> Result<()> {
     // Using a thread does not make a difference here.
@@ -655,16 +642,24 @@ async fn dispatch_output_to_terminal(
             // Usually there are not more than 1024 bytes returned on macOS.
             match reader.read(&mut buf) {
                 Ok(0) => {
+                    // Child process ended.
                     return Ok(()); // EOF
                 }
                 Ok(bytes_read) => {
-                    terminal.lock().advance_bytes(&buf[0..bytes_read]);
-                    notify.notify_one();
+                    if let Some(terminal) = terminal.upgrade() {
+                        terminal.lock().advance_bytes(&buf[0..bytes_read]);
+                        notify.notify_one();
+                    } else {
+                        // Terminal is gone.
+                        return Ok(());
+                    }
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {
                     // Retry as recommended.
                 }
-                Err(e) => return Result::Err(e),
+                Err(e) => {
+                    return Result::Err(e);
+                }
             }
         }
     });

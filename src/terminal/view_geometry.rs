@@ -6,8 +6,11 @@ use wezterm_term::{Cell, Screen, StableRowIndex, Terminal};
 
 use crate::{
     range_ops::WithLength,
-    terminal::{ScreenGeometry, SelectedRange, Selection, SelectionMode, TerminalGeometry},
-    view_geometry::{CellUnit, PixelPoint},
+    terminal::{
+        CellUnit, ScreenGeometry, SelectedRange, Selection, SelectionMode, SizeCell,
+        TerminalGeometry,
+    },
+    view_geometry::PixelPoint,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -42,7 +45,7 @@ impl TerminalViewGeometry {
         self.terminal.line_height_px()
     }
 
-    pub fn terminal_size(&self) -> (usize, usize) {
+    pub fn terminal_size(&self) -> SizeCell {
         self.terminal.terminal_size
     }
 
@@ -65,10 +68,10 @@ impl TerminalViewGeometry {
     pub fn hit_test_cell(&self, view_px: PixelPoint) -> CellPos {
         let (x, mut y) = view_px.into();
 
-        let column = (x / self.terminal.cell_size_px.0 as f64).floor() as isize;
+        let column = (x / self.terminal.cell_size_px.width as f64).floor() as isize;
 
         y -= self.stable_range_ascend_px as f64;
-        let row = (y / self.terminal.cell_size_px.1 as f64).floor() as isize;
+        let row = (y / self.terminal.cell_size_px.height as f64).floor() as isize;
 
         CellPos {
             column,

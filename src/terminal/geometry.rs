@@ -3,41 +3,43 @@ use std::ops::Range;
 use portable_pty::PtySize;
 use wezterm_term::StableRowIndex;
 
+use massive_geometry::{SizePx, prelude::*};
+
 use crate::view_geometry::PixelPoint;
+
+pub struct CellUnit;
+
+pub type SizeCell = euclid::Size2D<usize, CellUnit>;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TerminalGeometry {
     /// Cell size in physical pixels.
-    pub cell_size_px: (u32, u32),
+    pub cell_size_px: SizePx,
 
     /// Terminal size in cells (columns, rows).
-    pub terminal_size: (usize, usize),
+    pub terminal_size: SizeCell,
 }
 
 impl TerminalGeometry {
-    pub fn new(cell_size: (u32, u32), terminal_cells: (usize, usize)) -> Self {
+    pub fn new(cell_size: SizePx, terminal_cells: SizeCell) -> Self {
         Self {
             cell_size_px: cell_size,
             terminal_size: terminal_cells,
         }
     }
 
-    pub fn resize_px(&mut self, terminal_inner_size: (u32, u32)) {
-        let terminal_cells = (
-            (terminal_inner_size.0 / self.cell_size_px.0) as usize,
-            (terminal_inner_size.1 / self.cell_size_px.1) as usize,
-        );
-        let terminal_cells = (terminal_cells.0.max(1), terminal_cells.1.max(1));
-
+    pub fn resize_px(&mut self, terminal_inner_size: SizePx) {
+        let terminal_cells = terminal_inner_size.component_div(self.cell_size_px);
+        let terminal_cells = terminal_cells.max((1, 1).into());
         self.terminal_size = terminal_cells;
     }
 
     pub fn columns(&self) -> usize {
-        self.terminal_size.0
+        self.terminal_size.width
     }
 
     pub fn rows(&self) -> usize {
-        self.terminal_size.1
+        self.terminal_size.height
     }
 
     /// Given a stable range of all the content and a pixel offset, clip the offset so that the
@@ -55,14 +57,11 @@ impl TerminalGeometry {
     }
 
     pub fn line_height_px(&self) -> u32 {
-        self.cell_size_px.1
+        self.cell_size_px.height
     }
 
-    pub fn size_px(&self) -> (u32, u32) {
-        (
-            self.cell_size_px.0 * self.terminal_size.0 as u32,
-            self.cell_size_px.1 * self.terminal_size.1 as u32,
-        )
+    pub fn size_px(&self) -> SizePx {
+        self.cell_size_px.component_mul(self.terminal_size)
     }
 
     pub fn pty_size(&self) -> PtySize {
@@ -70,8 +69,8 @@ impl TerminalGeometry {
             rows: self.rows() as _,
             cols: self.columns() as _,
             // Robustness: is this physical or logical size, and what does a terminal actually do with it?
-            pixel_width: self.cell_size_px.0 as _,
-            pixel_height: self.cell_size_px.1 as _,
+            pixel_width: self.cell_size_px.width as _,
+            pixel_height: self.cell_size_px.height as _,
         }
     }
 
@@ -79,8 +78,8 @@ impl TerminalGeometry {
         wezterm_term::TerminalSize {
             rows: self.rows(),
             cols: self.columns(),
-            pixel_width: self.cell_size_px.0 as usize,
-            pixel_height: self.cell_size_px.1 as usize,
+            pixel_width: self.cell_size_px.width as usize,
+            pixel_height: self.cell_size_px.height as usize,
             // Production: Set dpi
             ..wezterm_term::TerminalSize::default()
         }
@@ -96,7 +95,7 @@ impl TerminalGeometry {
             return Some(view_hit.y);
         }
 
-        let height = self.size_px().1 as f64;
+        let height = self.size_px().height as f64;
         if hit_y > height {
             return Some(hit_y - height);
         }

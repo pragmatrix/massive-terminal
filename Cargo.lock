@@ -2522,6 +2522,7 @@ name = "massive-animation"
 version = "0.1.0"
 dependencies = [
  "log",
+ "massive-geometry",
  "parking_lot",
  "plotters",
  "web-time",
@@ -2720,6 +2721,7 @@ name = "massive-util"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "tokio",
 ]
 

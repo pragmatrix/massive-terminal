@@ -4,6 +4,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use cosmic_text::Font;
 use swash::StringId;
 
+use massive_geometry::SizePx;
+
 /// A monospaced, terminal font of a certain size.
 ///
 /// Ergonomics: Separate metrics from font.
@@ -150,8 +152,8 @@ impl TerminalFont {
         })
     }
 
-    pub fn cell_size_px(&self) -> (u32, u32) {
-        (self.glyph_advance_px, self.font_height_px())
+    pub fn cell_size_px(&self) -> SizePx {
+        (self.glyph_advance_px, self.font_height_px()).into()
     }
 
     pub fn font_height_px(&self) -> u32 {
