@@ -26,7 +26,6 @@ use massive_desktop::{Application, Desktop};
 use massive_geometry::{Color, Point, SizePx};
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_renderer::FontWeight;
-use massive_scene::Matrix;
 use massive_shell::{ApplicationContext, Scene, shell};
 
 mod input;
