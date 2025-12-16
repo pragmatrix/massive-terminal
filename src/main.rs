@@ -261,23 +261,6 @@ impl MassiveTerminal {
                     .update(&self.view_state, &self.scene, mouse_pointer_on_view)?;
             }
 
-            // Center the view
-            {
-                let view_size = self.view_state.geometry.inner_size_px();
-                let center_transform = {
-                    Matrix::from_translation(
-                        (
-                            -((view_size.width / 2) as f64),
-                            -((view_size.height / 2) as f64),
-                            0.0,
-                        )
-                            .into(),
-                    )
-                };
-
-                self.view.matrix().update_if_changed(center_transform);
-            }
-
             // Render
             self.scene.render_to(&mut self.view)?;
 
