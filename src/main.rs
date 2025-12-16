@@ -1,6 +1,6 @@
 use std::{
     io::{self, ErrorKind},
-    sync::Arc,
+    sync::{Arc, Weak},
     time::{Duration, Instant},
 };
 
@@ -198,7 +198,7 @@ impl MassiveTerminal {
         let reader = self.pty_pair.master.try_clone_reader()?;
 
         let output_dispatcher =
-            dispatch_output_to_terminal(reader, self.terminal().clone(), notify.clone());
+            dispatch_output_to_terminal(reader, Arc::downgrade(self.terminal()), notify.clone());
 
         pin!(output_dispatcher);
 
@@ -626,9 +626,14 @@ impl TerminalConfiguration for MassiveTerminalConfiguration {
     }
 }
 
+// Detail: pass terminal as a Weak reference handle, because otherwise we would lock the terminal in
+// memory, which locks the writer in memory, which causes the child process (usually a shell) to
+// never terminate and therefore read() never to return here.
+//
+// An alternative is to use the child handle and explicitly invoke kill() on the ChildKiller trait.
 async fn dispatch_output_to_terminal(
     mut reader: impl io::Read + Send + 'static,
-    terminal: Arc<Mutex<Terminal>>,
+    terminal: Weak<Mutex<Terminal>>,
     notify: Arc<Notify>,
 ) -> Result<()> {
     // Using a thread does not make a difference here.
@@ -638,16 +643,24 @@ async fn dispatch_output_to_terminal(
             // Usually there are not more than 1024 bytes returned on macOS.
             match reader.read(&mut buf) {
                 Ok(0) => {
+                    // Child process ended.
                     return Ok(()); // EOF
                 }
                 Ok(bytes_read) => {
-                    terminal.lock().advance_bytes(&buf[0..bytes_read]);
-                    notify.notify_one();
+                    if let Some(terminal) = terminal.upgrade() {
+                        terminal.lock().advance_bytes(&buf[0..bytes_read]);
+                        notify.notify_one();
+                    } else {
+                        // Terminal is gone.
+                        return Ok(());
+                    }
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {
                     // Retry as recommended.
                 }
-                Err(e) => return Result::Err(e),
+                Err(e) => {
+                    return Result::Err(e);
+                }
             }
         }
     });
