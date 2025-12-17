@@ -13,3 +13,6 @@ applyTo: '**'
 - Prefer not to abbreviate identifiers.
 - Add function below their usage, not above.
 - For new types, try to add derive(Debug) at least.
+- Use `const` for identity values (e.g., `const IDENTITY: Self = ...`) instead of methods like `identity()`.
+- When checking if values are at their default/identity state, prefer exact equality (`==`) over approximate comparisons, as these values are typically unchanged from construction or deliberately set.
+- Extract repeated code patterns into reusable functions or methods to reduce duplication and improve maintainability.

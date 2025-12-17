@@ -8,9 +8,10 @@ use log::trace;
 
 use wezterm_term::StableRowIndex;
 
-use crate::range_ops::*;
-use massive_scene::{Handle, Location, Matrix};
+use massive_scene::{Handle, Location, Transform};
 use massive_shell::Scene;
+
+use crate::range_ops::*;
 
 /// A bucket allocator for scroll matrices. The buckets are defined by a fixed number of StableRowIndex.
 #[derive(Debug)]
@@ -67,10 +68,10 @@ impl ScrollLocations {
             Entry::Occupied(occupied) => occupied.into_mut().location.clone(),
             Entry::Vacant(vacant) => {
                 let matrix_scroll_offset_px = bucket_top_px - self.scroll_offset_px;
-                let matrix = scene.stage(Matrix::from_translation(
+                let transform = scene.stage(Transform::from_translation(
                     (0., matrix_scroll_offset_px as f64, 0.).into(),
                 ));
-                let location = scene.stage(Location::new(Some(self.parent.clone()), matrix));
+                let location = scene.stage(Location::new(Some(self.parent.clone()), transform));
                 let scroll_location = ScrollLocation {
                     location: location.clone(),
                     matrix_scroll_offset_px,
@@ -98,8 +99,8 @@ impl ScrollLocations {
                 location
                     .location
                     .value()
-                    .matrix
-                    .update(Matrix::from_translation(
+                    .transform
+                    .update(Transform::from_translation(
                         (0., new_scroll_offset as f64, 0.).into(),
                     ));
             }
