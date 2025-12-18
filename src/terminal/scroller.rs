@@ -46,7 +46,7 @@ impl TerminalScroller {
 
     /// Set a new velocity and start scrolling if not currently so.
     pub fn set_velocity(&mut self, pixels_per_second: f64) {
-        self.velocity.animate_to(
+        self.velocity.animate(
             pixels_per_second,
             self.phase_in_duration,
             Interpolation::CubicOut,
@@ -59,8 +59,8 @@ impl TerminalScroller {
     pub fn rest(&mut self, resting_point: f64) {
         // Research: How do we combine these two animations?
         self.velocity
-            .animate_to(0.0, self.phase_out_duration, Interpolation::CubicIn);
-        self.scroll_offset.animate_to(
+            .animate(0.0, self.phase_out_duration, Interpolation::CubicIn);
+        self.scroll_offset.animate(
             resting_point,
             self.phase_out_duration,
             Interpolation::CubicIn,
@@ -78,7 +78,7 @@ impl TerminalScroller {
             ScrollAnimationState::PhasingInOrScrolling => {
                 let velocity = self.velocity.value();
                 let new_scroll_offset = self.scroll_offset.value() + velocity;
-                self.scroll_offset.animate_to(
+                self.scroll_offset.animate(
                     new_scroll_offset,
                     Duration::ZERO,
                     Interpolation::Linear,
@@ -95,7 +95,7 @@ impl TerminalScroller {
                 // down and the final scroll offset taking hold.
                 let velocity = self.velocity.value();
                 let new_scroll_offset = self.scroll_offset.value() + velocity;
-                self.scroll_offset.animate_to(
+                self.scroll_offset.animate(
                     new_scroll_offset,
                     Duration::ZERO,
                     Interpolation::Linear,

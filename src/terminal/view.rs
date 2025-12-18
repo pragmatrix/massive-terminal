@@ -152,7 +152,7 @@ impl TerminalView {
     ///
     /// As soon a resting position is defined, the final value should be set to a integral value.
     pub fn scroll_to_px(&mut self, new_scroll_offset_px: f64) {
-        self.scroll_offset_px.animate_to_if_changed(
+        self.scroll_offset_px.animate_if_changed(
             new_scroll_offset_px,
             SCROLL_ANIMATION_DURATION,
             Interpolation::CubicOut,
@@ -185,7 +185,7 @@ impl TerminalView {
     /// This places all lines at their final positions.
     #[allow(unused)]
     pub fn finalize_animations(&mut self) {
-        self.scroll_offset_px.finalize();
+        self.scroll_offset_px.finish();
         self.apply_animations();
     }
 
