@@ -1,5 +1,5 @@
-//! Because of precision problems, we need to bucket allocate matrices. This way, we can share
-//! matrices, which - supposedly - can be optimized by the renderer in the future.
+//! Because of precision problems, we need to bucket allocate transforms. This way, we can share
+//! transforms, which - supposedly - can be optimized by the renderer in the future.
 
 use std::{collections::HashMap, ops::Range};
 
