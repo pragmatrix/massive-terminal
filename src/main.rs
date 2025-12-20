@@ -21,7 +21,7 @@ use wezterm_term::{
     KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex, Terminal, TerminalConfiguration, color,
 };
 
-use massive_applications::{InstanceContext, InstanceEvent, View, ViewEvent, ViewId};
+use massive_applications::{InstanceContext, InstanceEvent, View, ViewEvent, ViewId, ViewOrigin};
 use massive_desktop::{Application, Desktop};
 use massive_geometry::{Color, Point, SizePx};
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
@@ -151,13 +151,14 @@ impl MassiveTerminal {
         // Create the view first so we can parent terminal content to it
         let view = ctx
             .view(view_size_px)
+            .with_origin(ViewOrigin::LeftTop)
             .with_background_color(Color::BLACK)
             .build(&scene)?;
 
         let view_params = TerminalViewParams {
             fonts: fonts.clone(),
             font: terminal_font.clone(),
-            parent_location: view.location().clone(),
+            location: view.location().clone(),
         };
 
         let terminal_scroller =

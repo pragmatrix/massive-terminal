@@ -68,9 +68,8 @@ impl ScrollLocations {
             Entry::Occupied(occupied) => occupied.into_mut().location.clone(),
             Entry::Vacant(vacant) => {
                 let matrix_scroll_offset_px = bucket_top_px - self.scroll_offset_px;
-                let transform = scene.stage(Transform::from_translation(
-                    (0., matrix_scroll_offset_px as f64, 0.).into(),
-                ));
+                let transform =
+                    scene.stage(Transform::from((0., matrix_scroll_offset_px as f64, 0.)));
                 let location = scene.stage(Location::new(Some(self.parent.clone()), transform));
                 let scroll_location = ScrollLocation {
                     location: location.clone(),
@@ -100,9 +99,11 @@ impl ScrollLocations {
                     .location
                     .value()
                     .transform
-                    .update(Transform::from_translation(
-                        (0., new_scroll_offset as f64, 0.).into(),
-                    ));
+                    .update(Transform::from_translation((
+                        0.,
+                        new_scroll_offset as f64,
+                        0.,
+                    )));
             }
         });
 

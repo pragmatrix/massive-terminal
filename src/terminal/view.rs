@@ -36,7 +36,7 @@ const SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(100);
 pub struct TerminalViewParams {
     pub fonts: FontManager,
     pub font: TerminalFont,
-    pub parent_location: Handle<Location>,
+    pub location: Handle<Location>,
 }
 
 /// TerminalView is the into a terminal's screen lines.
@@ -116,7 +116,7 @@ impl TerminalView {
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * line_height as u64;
         let locations = ScrollLocations::new(
-            params.parent_location.clone(),
+            params.location.clone(),
             line_height,
             scroll_offset_px.cast_signed(),
         );
