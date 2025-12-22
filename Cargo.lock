@@ -2668,6 +2668,7 @@ dependencies = [
  "massive-util",
  "metrics",
  "metrics-exporter-prometheus",
+ "parking_lot",
  "replace_with",
  "sys-locale",
  "tokio",
