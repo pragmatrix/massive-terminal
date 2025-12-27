@@ -772,6 +772,9 @@ impl TerminalView {
         let terminal_geometry = &terminal_view_geometry.terminal;
         let columns = terminal_view_geometry.terminal.columns();
 
+        // Architecture: Clipping should be done in the final selection rects. The SelectionRange
+        // does not match the domain, but since we do have clamp_to_rows here, it makes everything
+        // easier.
         let selection = selection
             .and_then(|sr| sr.clamp_to_rows(terminal_view_geometry.stable_range.clone(), columns));
 
