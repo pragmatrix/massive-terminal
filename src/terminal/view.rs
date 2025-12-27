@@ -306,10 +306,10 @@ impl ViewUpdate<'_> {
     pub fn selection(
         &mut self,
         selection: Option<SelectedRange>,
-        terminal_geometry: &TerminalGeometry,
+        terminal_view_geometry: &TerminalViewGeometry,
     ) {
         self.view
-            .update_selection(self.scene, selection, terminal_geometry);
+            .update_selection(self.scene, selection, terminal_view_geometry);
     }
 }
 
@@ -767,14 +767,20 @@ impl TerminalView {
         &mut self,
         scene: &Scene,
         selection: Option<SelectedRange>,
-        terminal_geometry: &TerminalGeometry,
+        terminal_view_geometry: &TerminalViewGeometry,
     ) {
+        let terminal_geometry = &terminal_view_geometry.terminal;
+        let columns = terminal_view_geometry.terminal.columns();
+
+        let selection = selection
+            .and_then(|sr| sr.clamp_to_rows(terminal_view_geometry.stable_range.clone(), columns));
+
         match selection {
             Some(selection_range) => {
-                // Robustness: A selection can span lines outside of the view range. To keep the
-                // numerical stability in the matrix, we should clip the rects to the visible range.
-                let rects_stable =
-                    Self::selection_rects(&selection_range, terminal_geometry.columns());
+                // Detail: Clip the selection range to what's actually visible. This keeps the
+                // number of matrices in use in check and also prevents outside rendering.
+
+                let rects_stable = Self::selection_rects(&selection_range, columns);
                 let cell_size = terminal_geometry.cell_size_px.cast::<f64>();
                 let location_stable_index = selection_range.stable_rows().start;
 

@@ -218,7 +218,7 @@ impl TerminalPresenter {
         lines_requested.add_set(&hyperlink_changed_lines);
 
         // The range of existing lines in the terminal that intersect with the view_stable_range.
-        let terminal_view_lines = screen_geometry.buffer_range.intersect(&view_visible_range);
+        let terminal_view_lines = screen_geometry.buffer_area.intersect(&view_visible_range);
 
         let screen = terminal.screen();
 
@@ -246,7 +246,7 @@ impl TerminalPresenter {
         //
         // Performance: Only lines_requested could be out of the full stable range.
         let terminal_lines_requested =
-            lines_requested.intersection_with_range(screen_geometry.buffer_range.clone());
+            lines_requested.intersection_with_range(screen_geometry.buffer_area.clone());
 
         let out_of_terminal_range_requested = {
             lines_requested.remove_set(&terminal_lines_requested);
@@ -258,7 +258,7 @@ impl TerminalPresenter {
         for stable_range in terminal_lines_requested.iter() {
             // Detail: This function returns bogus (wraps) if stable range is out of range, so we
             // must be sure to not request lines outside of the stable bounds.
-            debug_assert!(stable_range.is_inside(&screen_geometry.buffer_range));
+            debug_assert!(stable_range.is_inside(&screen_geometry.buffer_area));
             let phys_range = screen.stable_range(stable_range);
 
             // Performance: After a terminal `clear`, _all_ lines below the cursor are
@@ -332,18 +332,7 @@ impl TerminalPresenter {
             if changes_intersect_with_selection && !self.selection.can_progress() {
                 self.selection.reset();
             }
-            view_update.selection(
-                selected_range
-                    // The clamping is needed, otherwise we could keep too many matrix locations.
-                    // Architecture: The clamping should happen in the view (there where the problem arises)
-                    .and_then(|range| {
-                        range.clamp_to_rows(
-                            screen_geometry.buffer_range.clone(),
-                            screen_geometry.columns,
-                        )
-                    }),
-                &self.geometry,
-            );
+            view_update.selection(selected_range, &view_geometry);
         }
 
         drop(view_update);
@@ -540,11 +529,11 @@ impl ScrollState {
     ) {
         match self {
             ScrollState::Auto => {
-                view.scroll_to_stable(screen_geometry.visible_range.start);
+                view.scroll_to_stable(screen_geometry.default_input_area.start);
             }
             ScrollState::RestingPixel(pixel) => {
                 let scroll_offset_px =
-                    geometry.clamp_px_offset(screen_geometry.buffer_range.clone(), *pixel);
+                    geometry.clamp_px_offset(screen_geometry.buffer_area.clone(), *pixel);
                 view.scroll_to_px(scroll_offset_px);
             }
             ScrollState::SelectionScroll(scroller) => {
@@ -552,7 +541,7 @@ impl ScrollState {
                 let scaled_velocity = scroller.velocity * scroller.time_scale.scale_seconds();
                 let final_px_offset = current_px_offset + scaled_velocity;
                 let final_px_offset_clamped =
-                    geometry.clamp_px_offset(screen_geometry.buffer_range.clone(), final_px_offset);
+                    geometry.clamp_px_offset(screen_geometry.buffer_area.clone(), final_px_offset);
                 view.scroll_to_px(final_px_offset_clamped);
             }
         }

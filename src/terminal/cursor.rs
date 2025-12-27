@@ -26,7 +26,7 @@ impl CursorMetrics {
 
         let screen = terminal.screen_mut();
 
-        let stable_y = screen_geometry.visible_range.start + pos.y as StableRowIndex;
+        let stable_y = screen_geometry.default_input_area.start + pos.y as StableRowIndex;
         let phys_y = screen.phys_row(pos.y);
         // Detail: This uses `visible_cells()`.
         let width = screen

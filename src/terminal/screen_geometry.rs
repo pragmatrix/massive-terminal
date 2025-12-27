@@ -6,31 +6,34 @@ use crate::range_ops::WithLength;
 
 #[derive(Debug)]
 pub struct ScreenGeometry {
-    // The stable range of the visible part of the terminal.
-    pub visible_range: Range<StableRowIndex>,
+    /// The default stable range of the part of the terminal that covers the bottom extents of the
+    /// terminal.
+    ///
+    /// This does not take scrolling into the scrollback buffer into account. It represents the
+    /// screen area that should visible when the user is typing.
+    pub default_input_area: Range<StableRowIndex>,
+
     // The range the terminal has line data for.
-    pub buffer_range: Range<StableRowIndex>,
+    pub buffer_area: Range<StableRowIndex>,
+
+    #[allow(unused)]
     pub columns: usize,
 }
 
 impl ScreenGeometry {
     pub fn new(screen: &Screen) -> Self {
-        let visible_range = Self::visible_range(screen);
-
-        let buffer_range = screen.phys_to_stable_row_index(0).with_len(
+        let buffer_area = screen.phys_to_stable_row_index(0).with_len(
             screen.scrollback_rows(), /* does include the visible part */
         );
 
+        let default_input_area = screen
+            .visible_row_to_stable_row(0)
+            .with_len(screen.physical_rows);
+
         Self {
-            visible_range,
-            buffer_range,
+            default_input_area,
+            buffer_area,
             columns: screen.physical_cols,
         }
-    }
-
-    pub fn visible_range(screen: &Screen) -> Range<StableRowIndex> {
-        screen
-            .visible_row_to_stable_row(0)
-            .with_len(screen.physical_rows)
     }
 }
