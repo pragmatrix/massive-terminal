@@ -72,9 +72,10 @@ pub struct TerminalView {
 
     /// The visible lines. This contains _only_ the lines currently visible in the terminal.
     ///
-    /// No lines for the scrollback. And if we are _inside_ the scrollback buffer, no lines below.
+    /// There are no lines for the scrollback. And if we are _inside_ the scrollback buffer, no
+    /// lines below that.
     ///
-    /// VecDeque because we want to optimize them for scrolling.
+    /// We use a VecDeque because we want this to be optimized for scrolling.
     lines: VecDeque<LineVisuals>,
     cursor: Option<Handle<Visual>>,
     selection: Option<SelectionVisual>,
@@ -319,11 +320,11 @@ impl TerminalView {
     /// This returns a set of stable index ranges that are _required_ to be updated together with
     /// the changed ones in the `view_range`.
     ///
-    /// This view_range is the one returned from `view_range()`.
+    /// `view_range` is the one returned from `view_range()`.
     ///
     /// Architecture: If nothing had changed, we already know the view range.
     ///
-    /// This begins the update cycle.
+    /// Calling this function begins the update cycle.
     fn update_view_range(
         &mut self,
         scene: &Scene,
@@ -463,7 +464,7 @@ impl TerminalView {
 
         // Performance: Background shapes are not included in the capacity. Use a temporary array here.
         let mut shapes: Vec<Shape> = Vec::with_capacity(clusters.len());
-        // Performance: Can we use some capacity here? Use a temporary array here?
+        // Performance: Can we use some capacity or a temporary array here?
         let mut overlay_shapes = Vec::new();
         let mut left = 0;
         let cell_size_px = self.font().cell_size_px().width as i64;
