@@ -22,7 +22,7 @@ use wezterm_term::{
 };
 
 use massive_applications::{InstanceContext, InstanceEvent, View, ViewEvent, ViewId};
-use massive_desktop::{Application, Desktop};
+use massive_desktop::{Application, Desktop, DesktopEnvironment};
 use massive_geometry::{Color, Point, SizePx};
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_renderer::FontWeight;
@@ -56,8 +56,9 @@ async fn main() -> Result<()> {
 
 async fn run(context: ApplicationContext) -> Result<()> {
     let applications = vec![Application::new(APPLICATION_NAME, terminal_instance)];
-    let desktop = Desktop::new(applications);
-    desktop.run(context).await
+    let desktop_env = DesktopEnvironment::new(applications);
+    let desktop = Desktop::new(desktop_env, context).await?;
+    desktop.run().await
 }
 
 async fn terminal_instance(mut ctx: InstanceContext) -> Result<()> {

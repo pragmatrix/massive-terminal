@@ -26,6 +26,7 @@ massive-applications.workspace = true
 massive-desktop.workspace = true
 massive-geometry.workspace = true
 massive-input.workspace = true
+massive-layout.workspace = true
 massive-renderer.workspace = true
 massive-scene.workspace = true
 massive-shapes.workspace = true
@@ -64,6 +65,7 @@ massive-applications = { path = "massive/applications" }
 massive-desktop = { path = "massive/desktop" }
 massive-geometry = { path = "massive/geometry" }
 massive-input = { path = "massive/input" }
+massive-layout = { path = "massive/layout" }
 massive-renderer = { path = "massive/renderer" }
 massive-scene = { path = "massive/scene" }
 massive-shapes = { path = "massive/shapes" }
@@ -92,6 +94,7 @@ swash = "0.2.5"
 sys-locale = { version = "0.3.2" }
 tokio = { version = "1.36.0", features = ["macros", "sync", "time"] }
 tokio-util = { version = "0.7.16", features = ["io"] }
+toml = "0.9.8"
 tracing = "0.1.40"
 tuple = "0.5.2"
 wgpu = "26.0.1"
