@@ -17,7 +17,9 @@ use massive_animation::{Animated, Interpolation};
 use massive_geometry::{Color, PixelUnit, Point, Rect, Size};
 use massive_renderer::FontManager;
 use massive_scene::{Handle, Location, Visual};
-use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
+use massive_shapes::{
+    GlyphKey, GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight,
+};
 use massive_shell::Scene;
 
 use super::TerminalGeometry;
@@ -554,23 +556,17 @@ impl TerminalView {
             let glyph_x = cell_index as u32 * font.glyph_advance_px;
 
             // Optimization: Don't pass empty / blank glyphs.
-            let glyph = RunGlyph {
-                pos: (glyph_x as i32, 0),
-                // Architecture: Introduce an internal CacheKey that does not use SubpixelBin (we won't
-                // support that ever, because the author holds the belief that subpixel rendering is a scam)
-                //
-                // Architecture: Research if we would actually benefit from subpixel rendering in
-                // inside a regular gray scale anti-aliasing setup.
-                key: CacheKey {
-                    font_id: glyph.font_id,
-                    glyph_id: glyph.glyph_id,
-                    font_size_bits: font.size.to_bits(),
-                    x_bin: SubpixelBin::Zero,
-                    y_bin: SubpixelBin::Zero,
-                    font_weight: glyph.font_weight,
-                    flags: glyph.cache_key_flags,
-                },
-            };
+
+            // Robustness: Cache `glyph.cache_key_flags` get ignored. At this point I am not sure if it's needed.
+            let glyph = RunGlyph::new(
+                (glyph_x as i32, 0),
+                GlyphKey::new(
+                    glyph.font_id,
+                    glyph.glyph_id,
+                    font.size,
+                    TextWeight(glyph.font_weight.0),
+                ),
+            );
             glyphs.push(glyph);
         }
 
