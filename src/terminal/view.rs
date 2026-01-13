@@ -13,6 +13,13 @@ use wezterm_term::{
     CellAttributes, Hyperlink, Intensity, Line, StableRowIndex, Underline, color::ColorPalette,
 };
 
+use massive_animation::{Animated, Interpolation};
+use massive_geometry::{Color, PixelUnit, Point, Rect, Size};
+use massive_renderer::FontManager;
+use massive_scene::{Handle, Location, Visual};
+use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
+use massive_shell::Scene;
+
 use super::TerminalGeometry;
 use crate::{
     TerminalFont,
@@ -23,12 +30,6 @@ use crate::{
     },
     view_geometry::CellRect,
 };
-use massive_animation::{Animated, Interpolation};
-use massive_geometry::{Color, PixelUnit, Point, Rect, Size};
-use massive_renderer::FontManager;
-use massive_scene::{Handle, Location, Visual};
-use massive_shapes::{GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight};
-use massive_shell::Scene;
 
 const SCROLL_ANIMATION_DURATION: Duration = Duration::from_millis(100);
 
@@ -476,7 +477,7 @@ impl TerminalView {
                 AttributeResolver::new(&self.color_palette, reverse_video, &cluster.attrs);
 
             let run =
-                Self::cluster_to_run(font_system, self.font(), &attributes, (left, top), &cluster)?;
+                Self::cluster_to_run(font_system, self.font(), &attributes, (left, top), &cluster);
 
             let background =
                 Self::cluster_background(&cluster, self.font(), &attributes, (left, top));
@@ -492,9 +493,7 @@ impl TerminalView {
                 underline_hyperlink,
             );
 
-            if let Some(run) = run {
-                shapes.push(run.into());
-            }
+            shapes.push(run.into());
 
             if let Some(background) = background {
                 shapes.push(background)
@@ -516,14 +515,14 @@ impl TerminalView {
         attributes: &AttributeResolver,
         (left, top): (i64, i64),
         cluster: &CellCluster,
-    ) -> Result<Option<GlyphRun>> {
+    ) -> GlyphRun {
         let text_weight = attributes.text_weight();
         let font_weight = fontdb::Weight(text_weight.0);
 
         // Performance: BufferLine makes a copy of the text, is there a better way?
         // Architecture: Should we shape all clusters in one go and prepare Attrs::metadata() accordingly?
-        // Architecture: Under the hood, HarfRust is used for text shaping, use it directly?
-        // Performance: This contains internal caches, which might benefit reusing them.
+        // Performance: Under the hood, HarfRust is used for text shaping, use it directly?
+        // Performance: Shaping maintains internal caches, which might benefit reusing them.
         let mut buffer = BufferLine::new(
             &cluster.text,
             LineEnding::None,
@@ -575,7 +574,7 @@ impl TerminalView {
             glyphs.push(glyph);
         }
 
-        let run = GlyphRun {
+        GlyphRun {
             translation: (left as _, top as _, 0.).into(),
             metrics: GlyphRunMetrics {
                 // Precision: compute this once for the font size so that it also matches the pixel cell
@@ -588,9 +587,7 @@ impl TerminalView {
             // This looks redundant here.
             text_weight,
             glyphs,
-        };
-
-        Ok(Some(run))
+        }
     }
 
     /// Generates the background shape for the cluster.
