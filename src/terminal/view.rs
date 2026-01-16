@@ -14,7 +14,7 @@ use wezterm_term::{
 use massive_animation::{Animated, Interpolation};
 use massive_geometry::{Color, PixelUnit, Point, Rect, Size};
 use massive_renderer::FontManager;
-use massive_scene::{Handle, Location, Visual};
+use massive_scene::{At, Handle, Location, Object, Visual};
 use massive_shapes::{
     GlyphKey, GlyphRun, GlyphRunMetrics, RunGlyph, Shape, StrokeRect, TextWeight,
 };
@@ -114,6 +114,8 @@ impl TerminalView {
         scene: &Scene,
         scroll_offset: StableRowIndex,
     ) -> Self {
+        info!("{:?}", params.location);
+
         let line_height = params.font.cell_size_px().height;
         assert!(scroll_offset >= 0);
         let scroll_offset_px = scroll_offset as u64 * line_height as u64;
@@ -339,8 +341,8 @@ impl TerminalView {
         let mut new_visual = |stable_index| {
             let (location, top_offset) = self.locations.acquire_line_location(scene, stable_index);
             // Performance: Don't stage visuals with empty shapes?
-            let visual = scene.stage(Visual::new(location.clone(), []));
-            let overlays = scene.stage(Visual::new(location, []).with_depth_bias(1));
+            let visual = [].at(&location).enter(scene);
+            let overlays = [].at(&location).with_depth_bias(1).enter(scene);
             LineVisuals {
                 visual,
                 overlays,
@@ -681,7 +683,7 @@ impl TerminalView {
                 .locations
                 .acquire_line_location(scene, metrics.stable_y);
             let shape = self.cursor_shape(shape_type, metrics.pos.x, metrics.width, top_px);
-            scene.stage(Visual::new(location, [shape]))
+            [shape].at(location).enter(scene)
         })
     }
 

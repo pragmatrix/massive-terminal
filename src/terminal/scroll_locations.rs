@@ -8,7 +8,7 @@ use log::trace;
 
 use wezterm_term::StableRowIndex;
 
-use massive_scene::{Handle, Location, Transform};
+use massive_scene::{Handle, Location, Object, ToLocation, ToTransform, Transform};
 use massive_shell::Scene;
 
 use crate::range_ops::*;
@@ -68,9 +68,13 @@ impl ScrollLocations {
             Entry::Occupied(occupied) => occupied.into_mut().location.clone(),
             Entry::Vacant(vacant) => {
                 let matrix_scroll_offset_px = bucket_top_px - self.scroll_offset_px;
-                let transform =
-                    scene.stage(Transform::from((0., matrix_scroll_offset_px as f64, 0.)));
-                let location = scene.stage(Location::new(Some(self.parent.clone()), transform));
+                let transform = (0., matrix_scroll_offset_px as f64, 0.)
+                    .to_transform()
+                    .enter(scene);
+                let location = transform
+                    .to_location()
+                    .relative_to(&self.parent)
+                    .enter(scene);
                 let scroll_location = ScrollLocation {
                     location: location.clone(),
                     matrix_scroll_offset_px,
