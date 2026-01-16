@@ -1,11 +1,9 @@
 use std::{collections::VecDeque, ops::Range, sync::Arc, time::Duration};
 
 use anyhow::{Result, bail};
-use cosmic_text::{
-    Attrs, AttrsList, BufferLine, CacheKey, Family, FontSystem, LineEnding, Shaping, SubpixelBin,
-    fontdb,
-};
+use cosmic_text::{Attrs, AttrsList, BufferLine, Family, FontSystem, LineEnding, Shaping, fontdb};
 use euclid::Point2D;
+use log::info;
 use rangeset::RangeSet;
 
 use termwiz::{cellcluster::CellCluster, color::ColorAttribute, surface::CursorShape};
