@@ -9,6 +9,7 @@ use arboard::Clipboard;
 use derive_more::Debug;
 use log::{debug, info, trace, warn};
 use parking_lot::Mutex;
+use serde::Deserialize;
 use tokio::{pin, select, sync::Notify, task};
 use url::Url;
 use winit::{
@@ -90,6 +91,18 @@ struct MassiveTerminal {
     clipboard: Clipboard,
 }
 
+#[derive(Debug, Deserialize)]
+struct Parameters {
+    command: Option<String>,
+}
+
+enum RunMode {
+    // Input is active, the shell is running.
+    Active,
+    /// Output of the shell stopped. We are just looking at the results.
+    Passive,
+}
+
 impl MassiveTerminal {
     async fn new(ctx: &mut InstanceContext) -> Result<Self> {
         // Use the shared FontManager from the context
@@ -126,14 +139,23 @@ impl MassiveTerminal {
         // Create a new pty
         let pty_pair = pty_system.openpty(terminal_geometry.pty_size())?;
 
-        let cmd = CommandBuilder::new_default_prog();
+        // Setup Command builder
+        let shell = CommandBuilder::new_default_prog().get_shell();
+        let mut cmd = CommandBuilder::new(&shell);
+
+        // Deserialize parameters
+        if let Some(parameters) = ctx.parameters() {
+            let p: Parameters = serde_json::from_value(parameters.clone().into())?;
+            if let Some(command) = p.command {
+                cmd.arg("-c");
+                cmd.arg(command);
+            }
+        }
 
         let _child = pty_pair.slave.spawn_command(cmd)?;
 
-        // No one knows here what and when anything blocks, so we create two channels for writing and on
-        // for reading from the pty.
-        // Send data to the pty by writing to the master
-
+        // I don't how what and when anything blocks, so create two channels for writing and on for
+        // reading from the pty. Send data to the pty by writing to the master
         let writer = pty_pair.master.take_writer()?;
 
         let configuration = MassiveTerminalConfiguration {};
@@ -149,7 +171,7 @@ impl MassiveTerminal {
 
         let scene = ctx.new_scene();
 
-        // Create the view first so we can parent terminal content to it
+        // Create the view first so we can present terminal content.
         let view = ctx
             .view(view_size_px)
             .with_background_color(Color::BLACK)
@@ -210,17 +232,34 @@ impl MassiveTerminal {
         let min_movement_distance =
             self.min_pixel_distance_considered_movement(ctx.primary_monitor_scale_factor());
 
+        let mut mode = RunMode::Active;
+
         loop {
-            let instance_event_opt = select! {
-                r = &mut output_dispatcher => {
-                    info!("Shell output stopped. Exiting.");
-                    return r;
+            let instance_event_opt = match mode {
+                RunMode::Active => {
+                    select! {
+                        r = &mut output_dispatcher => {
+                            info!("Shell output ended. Entering passive mode: {r:?}");
+                            mode = RunMode::Passive;
+                            None
+                        }
+                        _ = notify.notified() => {
+                            None
+                        }
+                        instance_event = ctx.wait_for_event() => {
+                            Some(instance_event?)
+                        }
+                    }
                 }
-                _ = notify.notified() => {
-                    None
-                }
-                instance_event = ctx.wait_for_event() => {
-                    Some(instance_event?)
+                RunMode::Passive => {
+                    select! {
+                        _ = notify.notified() => {
+                            None
+                        }
+                        instance_event = ctx.wait_for_event() => {
+                            Some(instance_event?)
+                        }
+                    }
                 }
             };
 
