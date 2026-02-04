@@ -2633,6 +2633,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "derive_more",
+ "log",
  "massive-geometry",
  "massive-shapes",
  "parking_lot",

@@ -27,7 +27,7 @@ use massive_desktop::{Application, Desktop, DesktopEnvironment};
 use massive_geometry::{Color, Point, SizePx};
 use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
 use massive_renderer::FontWeight;
-use massive_shell::{ApplicationContext, Scene, shell};
+use massive_shell::{ApplicationContext, shell};
 
 mod input;
 mod range_ops;
@@ -71,7 +71,6 @@ struct MassiveTerminal {
     #[debug(skip)]
     pty_pair: PtyPair,
 
-    scene: Scene,
     view: View,
 
     event_manager: EventManager<ViewEvent>,
@@ -169,13 +168,11 @@ impl MassiveTerminal {
         );
         let last_rendered_seq_no = terminal.current_seqno();
 
-        let scene = ctx.new_scene();
-
         // Create the view first so we can present terminal content.
         let view = ctx
             .view(view_size_px)
             .with_background_color(Color::BLACK)
-            .build(&scene)?;
+            .build()?;
 
         let view_params = TerminalViewParams {
             fonts: fonts.clone(),
@@ -183,15 +180,17 @@ impl MassiveTerminal {
             location: view.location().clone(),
         };
 
+        let scene = view.scene();
+
         let terminal_scroller =
-            TerminalScroller::new(&scene, Duration::from_secs(1), Duration::from_secs(1));
+            TerminalScroller::new(scene, Duration::from_secs(1), Duration::from_secs(1));
 
         let presenter = TerminalPresenter::new(
             terminal_geometry,
             terminal,
             view_params,
             last_rendered_seq_no,
-            &scene,
+            scene,
         );
 
         // Set initial title
@@ -199,7 +198,6 @@ impl MassiveTerminal {
 
         Ok(Self {
             pty_pair,
-            scene,
             view,
             event_manager: EventManager::default(),
             view_state: ViewState::new(view_geometry),
@@ -296,12 +294,15 @@ impl MassiveTerminal {
                 self.presenter.apply_animations();
 
                 // Update lines, selection, and cursor.
-                self.presenter
-                    .update(&self.view_state, &self.scene, mouse_pointer_on_view)?;
+                self.presenter.update(
+                    &self.view_state,
+                    self.view.scene(),
+                    mouse_pointer_on_view,
+                )?;
             }
 
             // Render
-            self.scene.render_to(&mut self.view)?;
+            self.view.render()?;
 
             // Update mouse cursor shape.
             {
@@ -446,7 +447,8 @@ impl MassiveTerminal {
                         if let Some(progress) = movement.track_to(&ev) {
                             let progress = progress.try_map_or_cancel(view_pos_to_terminal_view);
 
-                            self.presenter.selection_progress(&self.scene, progress);
+                            self.presenter
+                                .selection_progress(self.view.scene(), progress);
                             if !self.presenter.selection_can_progress() {
                                 self.selecting = None;
                             }
