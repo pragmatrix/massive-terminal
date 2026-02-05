@@ -2596,7 +2596,6 @@ dependencies = [
  "derive_more",
  "euclid",
  "massive-geometry",
- "massive-util",
 ]
 
 [[package]]

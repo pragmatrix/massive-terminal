@@ -187,7 +187,7 @@ fn mouse_button_pressed_on_device(
     device_id: DeviceId,
 ) -> Option<MouseButton> {
     let (button, _) = ev
-        .states()
+        .device_states()
         .pointing_device(device_id)?
         .buttons
         .iter()

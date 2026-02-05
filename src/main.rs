@@ -345,7 +345,7 @@ impl MassiveTerminal {
             return Ok(());
         };
 
-        let modifiers = ev.states().keyboard_modifiers();
+        let modifiers = ev.device_states().keyboard_modifiers();
 
         // View-local coordinates are already provided by ViewEvent, identity transform
         //
@@ -552,7 +552,7 @@ impl MassiveTerminal {
             x_pixel_offset: discrete_point.x,
             y_pixel_offset: discrete_point.y,
             button,
-            modifiers: convert_modifiers(ev.states().keyboard_modifiers()),
+            modifiers: convert_modifiers(ev.device_states().keyboard_modifiers()),
         };
 
         debug!("Sending mouse event to terminal {event:?}");
