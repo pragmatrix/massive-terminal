@@ -5,7 +5,7 @@
 
 use winit::{
     event::{self, DeviceId, ElementState, KeyEvent, MouseScrollDelta, TouchPhase},
-    keyboard::{Key, ModifiersState, NamedKey},
+    keyboard::{Key, NamedKey},
 };
 
 use termwiz::input::{KeyCode, Modifiers};
@@ -18,25 +18,30 @@ use massive_input::Event;
 /// Convert a full `winit` `KeyEvent` to a `(KeyCode, Modifiers)` pair.
 /// Returns `None` when the event shouldn't be forwarded to the terminal
 /// (e.g. pure modifier changes or unsupported keys).
-pub fn convert_key_event(event: &KeyEvent, mods: ModifiersState) -> Option<(KeyCode, Modifiers)> {
+pub fn convert_key_event(
+    event: &KeyEvent,
+    mods: winit::event::Modifiers,
+) -> Option<(KeyCode, Modifiers)> {
     let keycode = convert_key(&event.logical_key)?;
     let converted_mods = convert_modifiers(mods);
     Some((keycode, converted_mods))
 }
 
 /// Convert a `winit` `ModifiersState` to `termwiz` `Modifiers`.
-pub fn convert_modifiers(mods: ModifiersState) -> Modifiers {
+pub fn convert_modifiers(mods: winit::event::Modifiers) -> Modifiers {
+    // Robustness: Can we provide a more detailed state, LEFT / RIGHT CONTROL / LEFT / RIGHT SHIFT?
+    let state = mods.state();
     let mut out = Modifiers::NONE;
-    if mods.shift_key() {
+    if state.shift_key() {
         out |= Modifiers::SHIFT;
     }
-    if mods.control_key() {
+    if state.control_key() {
         out |= Modifiers::CTRL;
     }
-    if mods.alt_key() {
+    if state.alt_key() {
         out |= Modifiers::ALT;
     }
-    if mods.super_key() {
+    if state.super_key() {
         out |= Modifiers::SUPER;
     }
     out

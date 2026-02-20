@@ -25,7 +25,7 @@ use wezterm_term::{
 use massive_applications::{InstanceContext, InstanceEvent, View, ViewEvent, ViewId};
 use massive_desktop::{Application, Desktop, DesktopEnvironment};
 use massive_geometry::{Color, Point, SizePx};
-use massive_input::{Event, EventManager, ExternalEvent, MouseGesture, Movement};
+use massive_input::{Event, EventManager, MouseGesture, Movement};
 use massive_renderer::FontWeight;
 use massive_shell::{ApplicationContext, shell};
 
@@ -328,17 +328,13 @@ impl MassiveTerminal {
     // Correctness: There are a number of locks on the terminal here, may lock only once.
     fn process_view_event(
         &mut self,
-        view_id: ViewId,
+        _view: ViewId,
         view_event: &ViewEvent,
         mouse_pointer_on_view: &mut Option<PixelPoint>,
         min_movement_distance: f64,
     ) -> Result<()> {
         let now = Instant::now();
-        let Some(ev) = self.event_manager.add_event(ExternalEvent {
-            scope: view_id,
-            event: view_event.clone(),
-            time: now,
-        }) else {
+        let Some(ev) = self.event_manager.add_event(view_event.clone(), now) else {
             // Event is redundant. If we would process them, Clicks in `mc` for example would not
             // work on the first try, because `mc` gets confused by winit's behavior to send a
             // redundant CursorMoved event before ever mouse press / release event.
