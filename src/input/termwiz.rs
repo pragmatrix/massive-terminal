@@ -146,9 +146,9 @@ pub fn convert_mouse_event_from_view(
     let pos = ev.pos()?;
 
     let (kind, button) = match view_event {
-        ViewEvent::CursorMoved { device_id, .. } => (
+        ViewEvent::CursorMoved { .. } => (
             MouseEventKind::Move,
-            mouse_button_pressed_on_device(ev, *device_id).unwrap_or(MouseButton::None),
+            mouse_button_pressed(ev).unwrap_or(MouseButton::None),
         ),
         ViewEvent::MouseWheel {
             delta: MouseScrollDelta::LineDelta(xd, 0.0),
@@ -187,13 +187,10 @@ pub fn convert_mouse_event_from_view(
     Some((kind, button, pos))
 }
 
-fn mouse_button_pressed_on_device(
-    ev: &Event<ViewEvent>,
-    device_id: DeviceId,
-) -> Option<MouseButton> {
+fn mouse_button_pressed(ev: &Event<ViewEvent>) -> Option<MouseButton> {
     let (button, _) = ev
         .device_states()
-        .pointing_device(device_id)?
+        .pointing_device(DeviceId::dummy())?
         .buttons
         .iter()
         .filter(|(_, s)| s.element == ElementState::Pressed)
