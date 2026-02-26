@@ -85,7 +85,7 @@ pub struct TerminalView {
 #[derive(Debug)]
 struct LineVisuals {
     /// The visual representing the line (Currently includes background and text).
-    visual: Handle<Visual>,
+    text: Handle<Visual>,
 
     /// The visual for the overlays, like underlines.
     overlays: Handle<Visual>,
@@ -341,10 +341,10 @@ impl TerminalView {
         let mut new_visual = |stable_index| {
             let (location, top_offset) = self.locations.acquire_line_location(scene, stable_index);
             // Performance: Don't stage visuals with empty shapes?
-            let visual = [].at(&location).enter(scene);
-            let overlays = [].at(&location).with_depth_bias(1).enter(scene);
+            let text = [].at(&location).with_decal_order(0).enter(scene);
+            let overlays = [].at(&location).with_decal_order(1).enter(scene);
             LineVisuals {
-                visual,
+                text,
                 overlays,
                 top_offset,
             }
@@ -442,7 +442,7 @@ impl TerminalView {
 
             let line_visuals = &mut self.lines[line_index];
 
-            line_visuals.visual.update_with(|v| {
+            line_visuals.text.update_with(|v| {
                 v.shapes = shapes.into();
             });
 
